@@ -25,3 +25,19 @@ def scene(ctc01, tmp_path_factory):
     from step_pmi_viewer import read_scene
 
     return read_scene(ctc01, tmp_path_factory.mktemp("glb") / "p.glb")
+
+
+@pytest.fixture(scope="session")
+def no_pmi(tmp_path_factory) -> Path:
+    """A plain solid: geometry, and no annotation of any kind.
+
+    Built here rather than taken from the NIST set, which is all AP242 with PMI.
+    A plate with a through hole and a chamfered edge is enough for recognition to
+    have something to find.
+    """
+    from build123d import Box, Cylinder, Pos, export_step
+
+    part = Box(40, 30, 10) - Pos(8, 0, 0) * Cylinder(4, 20)
+    path = tmp_path_factory.mktemp("plain") / "plate.step"
+    export_step(part, str(path))
+    return path

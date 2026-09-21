@@ -122,6 +122,10 @@ class Scene:
     glb: bytes
     bbox_min: Vec
     bbox_max: Vec
+    #: Where the annotations came from, when it is not the file's own PMI.
+    #: Shown in the panel, so recognised features cannot be read as authored
+    #: ones -- an inferred R5 blend is not a radius an engineer specified.
+    origin: str = ""
     annotations: list[Annotation] = field(default_factory=list)
     views: list[SavedView] = field(default_factory=list)
     graphics: list[Graphic] = field(default_factory=list)

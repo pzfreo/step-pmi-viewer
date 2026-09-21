@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__PART__ — Quiddity features</title>
+<title>__PART__ — PMI</title>
 <style>
   :root {
     --bg: #ffffff; --panel: #f7f8fa; --ink: #1a1d21; --muted: #707880;
@@ -506,7 +506,8 @@ if (DATA.views && DATA.views.length) {
   document.getElementById('viewsGroup').hidden = false;
 }
 
-$('sub').textContent = `${total} annotations · ${byGroup.size} kinds`;
+$('sub').textContent = (DATA.origin ? DATA.origin + ' · ' : '') +
+                       `${total} annotations · ${byGroup.size} kinds`;
 applyView(); applyLook();
 
 // --- orientation cube ---------------------------------------------------

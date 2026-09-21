@@ -43,6 +43,7 @@ def render(
     """
     payload = {
         "part": scene.name,
+        "origin": scene.origin,
         "bbox": {
             "min": list(scene.bbox_min),
             "max": list(scene.bbox_max),
