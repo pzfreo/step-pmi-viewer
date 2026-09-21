@@ -65,3 +65,13 @@ def test_label_detail_can_be_chosen(scene):
     # Minimal drops the descriptor, the tolerance and the datum compartments.
     assert 'body[data-detail="minimal"] .pmi .sub' in html
     assert 'body[data-detail="none"] .pmi-in { display: none; }' in html
+
+
+def test_repeats_can_be_grouped(scene):
+    """A drawing points once at identical features and says how many."""
+    html = render(scene)
+    assert 'id="cbRepeat"' in html
+    assert "repeatCount" in html
+    # The echo keeps neither its text nor its leader.
+    assert ".pmi.echo .pmi-in { visibility: hidden; }" in html
+    assert "L.line.visible = false; L.dot.visible = false;" in html

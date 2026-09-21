@@ -66,6 +66,10 @@
   }
   .pmi-in { display: inline-block; transform: translate(9px, -50%); will-change: transform; }
   .pmi .sub { font-weight: 400; opacity: .8; }
+  /* The count a drawing puts in front of a callout covering several identical
+     features: "4× ⌀35 THRU", with a leader to each of them. */
+  .pmi .times { font-weight: 700; }
+  .pmi.echo .pmi-in { visibility: hidden; }
   .pmi .why {
     display: none; position: absolute; left: 0; top: 100%; margin-top: 3px;
     max-width: 250px; white-space: normal; font-weight: 400; font-size: 10.5px;
@@ -127,6 +131,7 @@
     <label class="row"><input type="checkbox" id="cbOrigin"><span class="nm">Origin</span></label>
     <label class="row"><input type="checkbox" id="cbDark"><span class="nm">Dark background</span></label>
     <label class="row"><input type="checkbox" id="cbFacing" checked><span class="nm">Hide far side</span></label>
+    <label class="row"><input type="checkbox" id="cbRepeat" checked><span class="nm">Group repeats</span></label>
   </div>
 
   <div class="grp">
@@ -254,7 +259,7 @@ for (const a of DATA.labels) {
     inner = `${a.cells[0]}${tol}` +
       (a.cells.length > 1 ? ` <span class="sub">${a.cells.slice(1).join(' ')}</span>` : '') + why;
   }
-  el.innerHTML = `<span class="pmi-in">${inner}</span>`;
+  el.innerHTML = `<span class="pmi-in"><span class="times"></span>${inner}</span>`;
   const tag = new CSS2DObject(el);
   const near = new THREE.Vector3(...(a.origin));
   tag.position.copy(near); scene.add(tag);
@@ -289,11 +294,21 @@ for (const a of DATA.labels) {
   byGroup.get(a.group).items.push({ el, line, dot });
   placedLabels.push({
     el, tag, line, dot, world: near, inner: el.firstElementChild,
+    times: el.querySelector('.times'),
+    // Identical text on the same kind of annotation is the same callout.
+    repeat: `${a.group}\u0000${a.cells.join(' ')}\u0000` +
+            (a.tolerance ? JSON.stringify(a.tolerance) : ''),
     out: near.clone().sub(new THREE.Vector3(...a.anchor)).normalize(),
   });
 }
 
 // --- controls -----------------------------------------------------------
+// How many features each distinct callout covers, for the "n×" prefix.
+const repeatCount = new Map();
+for (const L of placedLabels) {
+  repeatCount.set(L.repeat, (repeatCount.get(L.repeat) || 0) + 1);
+}
+
 const hidden = new Set();
 const list = document.getElementById('groups');
 const shown = document.getElementById('shown');
@@ -343,7 +358,8 @@ for (const [fam, g] of [...byGroup].sort((x, y) => y[1].items.length - x[1].item
 }
 $('all').onclick = () => { hidden.clear(); applyPmi(); };
 $('none').onclick = () => { byGroup.forEach((_, f) => hidden.add(f)); applyPmi(); };
-for (const id of ['cbPart', 'cbEdges', 'cbColour', 'cbBox', 'cbOrigin', 'cbDark', 'cbFacing'])
+for (const id of ['cbPart', 'cbEdges', 'cbColour', 'cbBox', 'cbOrigin', 'cbDark',
+                  'cbFacing', 'cbRepeat'])
   $(id).onchange = applyLook;
 $('alpha').oninput = applyLook;
 for (const radio of document.querySelectorAll('input[name=detail]'))
@@ -366,7 +382,7 @@ const proj = new THREE.Vector3(), toCam = new THREE.Vector3();
 function declutter() {
   const w = innerWidth, h = innerHeight;
   const cull = document.getElementById('cbFacing').checked;
-  const rows = [];
+  let rows = [];
   for (const L of placedLabels) {
     if (L.el.classList.contains('hidden')) { L.inner.style.transform = ''; continue; }
 
@@ -388,6 +404,34 @@ function declutter() {
     });
   }
   rows.sort((a, b) => a.depth - b.depth);
+
+  // One callout per distinct text, spoken by whichever instance is nearest the
+  // camera; the rest keep their leader and arrowhead but say nothing. That is
+  // how a drawing handles repeats, and it is the difference between a readable
+  // part and sixty overlapping labels.
+  if (document.getElementById('cbRepeat').checked) {
+    const spokenBy = new Map();
+    for (const r of rows) {
+      if (!spokenBy.has(r.L.repeat)) spokenBy.set(r.L.repeat, r.L);
+    }
+    for (const L of placedLabels) {
+      const speaker = spokenBy.get(L.repeat);
+      const echo = speaker !== undefined && speaker !== L;
+      L.el.classList.toggle('echo', echo);
+      L.times.textContent = speaker === L && repeatCount.get(L.repeat) > 1
+        ? `${repeatCount.get(L.repeat)}\u00d7 ` : '';
+      // An echo's leader goes too: a drawing points once and says how many,
+      // rather than drawing eighteen leaders to eighteen identical blends.
+      if (echo) { L.line.visible = false; L.dot.visible = false; }
+    }
+    rows = rows.filter(r => !r.L.el.classList.contains('echo'));
+  } else {
+    for (const L of placedLabels) {
+      L.el.classList.remove('echo');
+      L.times.textContent = '';
+    }
+  }
+
   const taken = [];
   for (const r of rows) {
     let dy = 0;
