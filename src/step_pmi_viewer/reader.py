@@ -89,8 +89,16 @@ def read_scene(path: Path | str, glb_path: Path | str) -> Scene:
     if shapes.Length() == 0:
         raise NoGeometry(f"{path} contains no shape")
 
+    # Every shape, not just the first: a document whose first label carries no
+    # geometry -- an assembly node, say -- leaves the box void and everything
+    # downstream fails with "Bnd_Box is void".
     box = Bnd_Box()
-    BRepBndLib.Add_s(shape_tool.GetShape_s(shapes.Value(1)), box)
+    for i in range(1, shapes.Length() + 1):
+        shape = shape_tool.GetShape_s(shapes.Value(i))
+        if not shape.IsNull():
+            BRepBndLib.Add_s(shape, box)
+    if box.IsVoid():
+        raise NoGeometry(f"{path} contains no shape with any extent")
     lo, hi = box.CornerMin(), box.CornerMax()
     bbox_min: Vec = (lo.X(), lo.Y(), lo.Z())
     bbox_max: Vec = (hi.X(), hi.Y(), hi.Z())
@@ -105,32 +113,46 @@ def read_scene(path: Path | str, glb_path: Path | str) -> Scene:
             return None
         return _surface_centre(shape_tool.GetShape_s(first.Value(1)))
 
-    scene.annotations.extend(_dimensions(dimtol, anchor_for))
+    scene.annotations.extend(_dimensions(dimtol, anchor_for, diagonal))
     scene.annotations.extend(_tolerances(dimtol, anchor_for, read_magnitudes(path), diagonal))
     scene.annotations.extend(_datums(dimtol))
     return scene
 
 
-def _dimensions(dimtol: Any, anchor_for: Any) -> list[Annotation]:
+#: Dimension kinds carrying no measured value. Their content is drawn glyphs
+#: rather than a number, so there is nothing for this viewer to write as text.
+PRESENTATION_ONLY = {"DimensionPresentation", "CommonLabel", "None"}
+
+
+def _dimensions(dimtol: Any, anchor_for: Any, diagonal: float) -> list[Annotation]:
     labels = TDF_LabelSequence()
     dimtol.GetDimensionLabels(labels)
     out: list[Annotation] = []
     for i in range(1, labels.Length() + 1):
         label = labels.Value(i)
         obj = XCAFDoc_Dimension.Set_s(label).GetObject()
-        attach = obj.GetPointTextAttach()
-        origin: Vec = (attach.X(), attach.Y(), attach.Z())
-        # A dimension with no authored text position cannot be drawn anywhere
-        # meaningful, and placing it at the origin would be worse than omitting.
-        if origin == (0.0, 0.0, 0.0):
-            continue
         kind = _kind(obj.GetType())
+        attach = obj.GetPointTextAttach()
+        authored: Vec = (attach.X(), attach.Y(), attach.Z())
+        anchor: Vec | None = anchor_for(label)
+
+        if authored != (0.0, 0.0, 0.0):
+            origin: Vec = authored
+        else:
+            # No authored text position. A presentation-only kind has no value to
+            # write either, so there is nothing to place; but a real dimension is
+            # a callout the drawing shows, and its referenced geometry says where
+            # the feature is even when the file does not say where its text went.
+            if kind in PRESENTATION_ONLY or anchor is None:
+                continue
+            origin = (anchor[0], anchor[1], anchor[2] + diagonal * STANDOFF)
+
         name = obj.GetSemanticName()
         out.append(
             Annotation(
                 kind="dimension",
                 cells=(dimension_text(kind, obj.GetValue()),),
-                anchor=anchor_for(label) or origin,
+                anchor=anchor if anchor is not None else origin,
                 origin=origin,
                 group="dimension",
                 detail=(name.ToCString() if name else "") or kind,
