@@ -55,3 +55,13 @@ def test_a_caller_can_supply_its_own_palette(scene):
     assert colours["dimension"] == "#ff00ff"
     assert colours["holes"] == "#00ff00"
     assert colours["datum"] == "#2e8b57"
+
+
+def test_label_detail_can_be_chosen(scene):
+    """Full, minimal or none: a crowded part is unreadable at full detail."""
+    html = render(scene)
+    for level in ("full", "minimal", "none"):
+        assert f'value="{level}"' in html
+    # Minimal drops the descriptor, the tolerance and the datum compartments.
+    assert 'body[data-detail="minimal"] .pmi .sub' in html
+    assert 'body[data-detail="none"] .pmi-in { display: none; }' in html

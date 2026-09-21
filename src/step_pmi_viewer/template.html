@@ -41,7 +41,7 @@
     font: inherit; cursor: pointer; text-align: left; border-radius: 3px;
   }
   label.row:hover, button.row:hover { background: rgba(127,127,127,.12); }
-  .row input[type=checkbox] { margin: 0; accent-color: #2f6fb5; }
+  .row input[type=checkbox], .row input[type=radio] { margin: 0; accent-color: #2f6fb5; }
   .sw { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
   .row .nm { flex: 1; text-transform: capitalize; }
   .row .ct { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
@@ -75,6 +75,16 @@
   }
   .pmi:hover .why { display: block; }
   .pmi.hidden { display: none; }
+
+  /* Label detail. Minimal keeps the value a drawing leads with and drops the
+     descriptor, the tolerance and the datum references; none leaves the leader
+     and its dot, so a feature is still located without being named. */
+  body[data-detail="minimal"] .pmi .sub,
+  body[data-detail="minimal"] .pmi .tolpair,
+  body[data-detail="minimal"] .pmi .tolsym,
+  body[data-detail="minimal"] .fcf span ~ span ~ span { display: none; }
+  body[data-detail="minimal"] .fcf span:nth-child(2) { border-right: 0; }
+  body[data-detail="none"] .pmi-in { display: none; }
 
   /* Feature control frame, as ASME Y14.5 draws it: characteristic, tolerance,
      then datum references, each in its own compartment. */
@@ -120,6 +130,13 @@
   </div>
 
   <div class="grp">
+    <b>Label detail</b>
+    <label class="row"><input type="radio" name="detail" value="full" checked><span class="nm">Full</span></label>
+    <label class="row"><input type="radio" name="detail" value="minimal"><span class="nm">Minimal</span></label>
+    <label class="row"><input type="radio" name="detail" value="none"><span class="nm">None</span></label>
+  </div>
+
+  <div class="grp">
     <b>Transparency</b>
     <input type="range" id="alpha" min="0" max="90" value="0">
   </div>
@@ -136,6 +153,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 const DATA = __DATA__;
 const GROUP_COLOUR = __COLOURS__;
@@ -208,6 +228,10 @@ const axes = new THREE.AxesHelper(d * 0.18); axes.visible = false; scene.add(axe
 // --- PMI ----------------------------------------------------------------
 const byGroup = new Map();
 const placedLabels = [];
+const leaderMaterials = [];
+//: Leader width in pixels. Thin enough not to obscure the part, thick enough to
+//: follow across a busy view.
+const LEADER_PX = 2.2;
 for (const a of DATA.labels) {
   const el = document.createElement('div');
   el.className = 'pmi'; el.style.color = GROUP_COLOUR[a.group] || '#555';
@@ -235,15 +259,31 @@ for (const a of DATA.labels) {
   const near = new THREE.Vector3(...(a.origin));
   tag.position.copy(near); scene.add(tag);
 
-  const mat = new THREE.LineBasicMaterial({
-    color: new THREE.Color(GROUP_COLOUR[a.group] || '#555'), transparent: true, opacity: 0.75 });
-  const pts = [near, new THREE.Vector3(...a.anchor)];
-  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+  const tint = new THREE.Color(GROUP_COLOUR[a.group] || '#555');
+  const tip = new THREE.Vector3(...a.anchor);
+
+  // WebGL draws every THREE.Line one pixel wide whatever linewidth says, so a
+  // leader that should read at a glance is built from Line2 instead.
+  const mat = new LineMaterial({
+    color: tint.getHex(), linewidth: LEADER_PX, worldUnits: false,
+    dashed: false, alphaToCoverage: true,
+  });
+  mat.resolution.set(innerWidth, innerHeight);
+  leaderMaterials.push(mat);
+  const geom = new LineGeometry();
+  geom.setPositions([near.x, near.y, near.z, tip.x, tip.y, tip.z]);
+  const line = new Line2(geom, mat);
+  line.computeLineDistances();
   scene.add(line);
 
-  const dot = new THREE.Mesh(new THREE.SphereGeometry(d * 0.003, 10, 8),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(GROUP_COLOUR[a.group] || '#555') }));
-  dot.position.set(...a.anchor); scene.add(dot);
+  // An arrowhead where the leader lands, as a drawing puts one.
+  const dot = new THREE.Mesh(
+    new THREE.ConeGeometry(d * 0.006, d * 0.022, 12),
+    new THREE.MeshBasicMaterial({ color: tint }));
+  const along = tip.clone().sub(near).normalize();
+  dot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), along);
+  dot.position.copy(tip).addScaledVector(along, -d * 0.011);
+  scene.add(dot);
 
   if (!byGroup.has(a.group)) byGroup.set(a.group, { colour: GROUP_COLOUR[a.group] || '#555', items: [] });
   byGroup.get(a.group).items.push({ el, line, dot });
@@ -288,6 +328,8 @@ function applyLook() {
   boxHelper.visible = $('cbBox').checked;
   axes.visible = $('cbOrigin').checked;
   document.documentElement.dataset.theme = $('cbDark').checked ? 'dark' : 'light';
+  const detail = document.querySelector('input[name=detail]:checked');
+  document.body.dataset.detail = detail ? detail.value : 'full';
 }
 
 for (const [fam, g] of [...byGroup].sort((x, y) => y[1].items.length - x[1].items.length)) {
@@ -304,6 +346,8 @@ $('none').onclick = () => { byGroup.forEach((_, f) => hidden.add(f)); applyPmi()
 for (const id of ['cbPart', 'cbEdges', 'cbColour', 'cbBox', 'cbOrigin', 'cbDark', 'cbFacing'])
   $(id).onchange = applyLook;
 $('alpha').oninput = applyLook;
+for (const radio of document.querySelectorAll('input[name=detail]'))
+  radio.onchange = applyLook;
 $('sub').textContent = `${total} annotations · ${byGroup.size} kinds`;
 applyPmi(); applyLook();
 
@@ -312,6 +356,7 @@ function resize() {
   const w = innerWidth, h = innerHeight;
   camera.aspect = w / h; camera.updateProjectionMatrix();
   renderer.setSize(w, h); overlay.setSize(w, h);
+  for (const m of leaderMaterials) m.resolution.set(w, h);
 }
 addEventListener('resize', resize); resize();
 // Labels sit beside their feature, so on a crowded part they collide on screen.

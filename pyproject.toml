@@ -25,6 +25,7 @@ dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.15,<2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/step_pmi_viewer"]
+artifacts = ["src/step_pmi_viewer/py.typed", "src/step_pmi_viewer/template.html"]
 
 [tool.ruff]
 line-length = 100
