@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>step-pmi-viewer</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f7f8fa; --ink: #1a1d21; --muted: #707880; --line: #d9dee4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171a; --panel: #1e2226; --ink: #e9ecef; --muted: #98a2ac; --line: #333a41; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg);
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header b { font-size: 13px; font-weight: 650; }
+  #status { color: var(--muted); flex: 1; }
+  #status.bad { color: #c0392b; }
+  button, label.file {
+    font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--bg); color: inherit; cursor: pointer;
+  }
+  button[disabled] { opacity: .45; cursor: default; }
+  input[type=file] { display: none; }
+  main { flex: 1; position: relative; }
+  #drop {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; text-align: center;
+    padding: 24px; color: var(--muted);
+  }
+  #drop.over { background: var(--panel); }
+  #drop h1 { font-size: 15px; font-weight: 650; color: var(--ink); margin: 0; }
+  #drop p { margin: 0; max-width: 34em; }
+  iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
+  body.showing #drop { display: none; }
+  body.showing iframe { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <b>step-pmi-viewer</b>
+  <span id="status">starting…</span>
+  <label class="file">choose a STEP file<input id="file" type="file" accept=".stp,.step,.STP,.STEP"></label>
+  <button id="save" disabled>save page</button>
+</header>
+<main>
+  <div id="drop">
+    <h1>Drop a STEP file here</h1>
+    <p>The file is read in this tab — the PMI is extracted by OpenCASCADE compiled to
+       WebAssembly, and nothing is uploaded anywhere.</p>
+  </div>
+  <iframe id="view" title="the part and its PMI"></iframe>
+</main>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
+<script>
+// OCCT for Pyodide comes from yeicor/OCP.wasm, whose wheels are built against one
+// Pyodide ABI at a time: bump the loader above and this pin together. Stay on the
+// 7.9 line -- OCP 8 renames the collection types the reader imports.
+const OCP_WHEEL = "cadquery-ocp-novtk-OCP.wasm==7.9.3.1.post202609191800";
+// Built with `uv build --wheel --out-dir web`. Installed without its dependencies:
+// build123d is only ever a way to get OCP, and here OCP is already installed.
+const PACKAGE = "./step_pmi_viewer-0.1.0-py3-none-any.whl";
+
+const GLUE = `
+import json, pathlib, tempfile
+from step_pmi_viewer import read_scene, render
+
+def convert(name, data):
+    work = pathlib.Path(tempfile.mkdtemp())
+    source = work / name
+    source.write_bytes(bytes(data))
+    scene = read_scene(source, work / "part.glb")
+    return json.dumps({"html": render(scene), "name": scene.name, "counts": scene.counts()})
+`;
+
+const statusEl = document.getElementById("status");
+const fileEl = document.getElementById("file");
+const saveEl = document.getElementById("save");
+const dropEl = document.getElementById("drop");
+const viewEl = document.getElementById("view");
+
+let convert = null;   // the Python entry point, once everything is installed
+let pending = null;   // a file chosen while still loading
+let saved = null;     // {url, name} of the page now on screen
+
+let stage = "";           // the last thing said, so a queued file can be added to it
+const say = (text, bad) => {
+  stage = text;
+  statusEl.textContent = pending ? `${text} — ${pending.name} is queued` : text;
+  statusEl.classList.toggle("bad", !!bad);
+};
+// Let the status paint before a call that holds the thread for seconds.
+const painted = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+
+async function boot() {
+  say("loading Python…");
+  const pyodide = await loadPyodide();
+  say("loading the CAD kernel (23 MB)…");
+  await pyodide.loadPackage("micropip");
+  const micropip = pyodide.pyimport("micropip");
+  await micropip.install(OCP_WHEEL);
+  say("loading step-pmi-viewer…");
+  // callKwargs, or the options object would land on micropip.install's second positional.
+  await micropip.install.callKwargs(PACKAGE, { deps: false });
+  await pyodide.runPythonAsync(GLUE);
+  convert = pyodide.globals.get("convert");
+  say("ready — choose a STEP file");
+  if (pending) show(pending);
+}
+
+async function show(file) {
+  if (!convert) { pending = file; say(stage); return; }
+  pending = null;
+  say(`reading ${file.name}…`);
+  await painted();
+  let result;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    result = JSON.parse(convert(file.name, bytes));
+  } catch (err) {
+    say(String(err.message || err).trim().split("\n").pop(), true);
+    return;
+  }
+  if (saved) URL.revokeObjectURL(saved.url);
+  saved = {
+    url: URL.createObjectURL(new Blob([result.html], { type: "text/html" })),
+    name: result.name + ".html",
+  };
+  viewEl.src = saved.url;
+  document.body.classList.add("showing");
+  saveEl.disabled = false;
+  const counts = Object.entries(result.counts).sort();
+  const total = counts.reduce((n, [, c]) => n + c, 0);
+  say(`${result.name}: ${total} annotations` +
+      (counts.length ? ` (${counts.map(([g, c]) => `${c} ${g}`).join(", ")})` : ""));
+}
+
+fileEl.addEventListener("change", () => { if (fileEl.files[0]) show(fileEl.files[0]); });
+saveEl.addEventListener("click", () => {
+  if (!saved) return;
+  const a = document.createElement("a");
+  a.href = saved.url;
+  a.download = saved.name;
+  a.click();
+});
+for (const type of ["dragenter", "dragover"]) {
+  document.addEventListener(type, e => { e.preventDefault(); dropEl.classList.add("over"); });
+}
+document.addEventListener("dragleave", () => dropEl.classList.remove("over"));
+document.addEventListener("drop", e => {
+  e.preventDefault();
+  dropEl.classList.remove("over");
+  if (e.dataTransfer.files[0]) show(e.dataTransfer.files[0]);
+});
+
+boot().catch(err => say(String(err.message || err), true));
+</script>
+</body>
+</html>
