@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__PART__ — Quiddity features</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f7f8fa; --ink: #1a1d21; --muted: #707880;
+    --line: #d9dee4; --halo: #ffffff;
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171a; --panel: #1e2226; --ink: #e9ecef; --muted: #98a2ac;
+    --line: #333a41; --halo: #14171a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 12.5px/1.45 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg); overflow: hidden;
+  }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  #panel {
+    position: fixed; top: 10px; right: 10px; width: 216px;
+    max-height: calc(100% - 20px); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px;
+    display: flex; flex-direction: column; overflow: hidden; z-index: 10;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08);
+  }
+  #panel h1 { margin: 0; padding: 9px 11px 7px; font-size: 12px; font-weight: 650;
+              border-bottom: 1px solid var(--line); }
+  #panel h1 small { display: block; font-weight: 400; color: var(--muted); font-size: 10.5px; }
+  .grp { padding: 7px 9px; border-bottom: 1px solid var(--line); }
+  .grp > b { display: block; font-size: 10px; text-transform: uppercase;
+             letter-spacing: .05em; color: var(--muted); margin-bottom: 5px; }
+  label.row, button.row {
+    display: flex; align-items: center; gap: 7px; width: 100%;
+    padding: 2.5px 3px; border: 0; background: none; color: inherit;
+    font: inherit; cursor: pointer; text-align: left; border-radius: 3px;
+  }
+  label.row:hover, button.row:hover { background: rgba(127,127,127,.12); }
+  .row input[type=checkbox] { margin: 0; accent-color: #2f6fb5; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+  .row .nm { flex: 1; text-transform: capitalize; }
+  .row .ct { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+  .row.off { opacity: .4; }
+  #families { overflow-y: auto; }
+  input[type=range] { width: 100%; accent-color: #2f6fb5; }
+  #foot { padding: 7px 11px; color: var(--muted); font-size: 10.5px;
+          display: flex; justify-content: space-between; align-items: center; }
+  #foot button { border: 1px solid var(--line); background: none; color: var(--muted);
+                 border-radius: 3px; padding: 2px 6px; cursor: pointer; font: inherit; }
+
+  /* PMI: coloured text floating on the model, no chrome -- as CAD PMI is drawn. */
+  /* CSS2DRenderer owns .pmi's transform -- it rewrites it every frame to place
+     the label on screen. The declutter offset therefore goes on an inner
+     element, or it would wipe out the positioning. */
+  .pmi {
+    position: relative; white-space: nowrap; font-size: 11.5px; font-weight: 600;
+    letter-spacing: .01em; pointer-events: auto; cursor: default;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 3px var(--halo), 0 0 3px var(--halo),
+                 0 0 2px var(--halo), 0 0 2px var(--halo);
+  }
+  .pmi-in { display: inline-block; transform: translate(9px, -50%); will-change: transform; }
+  .pmi .sub { font-weight: 400; opacity: .8; }
+  .pmi .why {
+    display: none; position: absolute; left: 0; top: 100%; margin-top: 3px;
+    max-width: 250px; white-space: normal; font-weight: 400; font-size: 10.5px;
+    color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 4px; padding: 5px 7px; text-shadow: none; z-index: 20;
+    box-shadow: 0 3px 12px rgba(0,0,0,.16);
+  }
+  .pmi:hover .why { display: block; }
+  .pmi.hidden { display: none; }
+
+  /* Feature control frame, as ASME Y14.5 draws it: characteristic, tolerance,
+     then datum references, each in its own compartment. */
+  .fcf { display: inline-flex; border: 1.3px solid currentColor; border-radius: 1px;
+         background: var(--bg); text-shadow: none; overflow: hidden; }
+  .fcf span { padding: 1px 6px; border-right: 1.3px solid currentColor;
+              display: inline-flex; align-items: center; justify-content: center;
+              min-width: 20px; }
+  .fcf span:last-child { border-right: 0; }
+  .fcf .sym { font-size: 13px; line-height: 1; }
+  /* Datum feature symbol: a boxed letter. */
+  .datum { display: inline-flex; border: 1.3px solid currentColor; border-radius: 1px;
+           background: var(--bg); text-shadow: none; padding: 1px 7px; min-width: 20px;
+           justify-content: center; }
+  /* Tolerances: a symmetric one sits inline, an asymmetric pair or a pair of
+     limits stacks, as on a drawing. */
+  .tolpair { display: inline-flex; flex-direction: column; align-items: flex-start;
+             font-size: 8.5px; line-height: 1.12; font-weight: 500; margin-left: 2px;
+             vertical-align: middle; }
+  .tolsym { font-weight: 500; font-size: 10.5px; margin-left: 2px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<aside id="panel">
+  <h1>__PART__<small id="sub"></small></h1>
+
+  <div class="grp">
+    <b>Display</b>
+    <label class="row"><input type="checkbox" id="cbPart" checked><span class="nm">Part geometry</span></label>
+    <label class="row"><input type="checkbox" id="cbEdges"><span class="nm">Edges</span></label>
+    <label class="row"><input type="checkbox" id="cbColour" checked><span class="nm">Feature colours</span></label>
+    <label class="row"><input type="checkbox" id="cbBox"><span class="nm">Bounding box</span></label>
+    <label class="row"><input type="checkbox" id="cbOrigin"><span class="nm">Origin</span></label>
+    <label class="row"><input type="checkbox" id="cbDark"><span class="nm">Dark background</span></label>
+    <label class="row"><input type="checkbox" id="cbFacing" checked><span class="nm">Hide far side</span></label>
+  </div>
+
+  <div class="grp">
+    <b>Transparency</b>
+    <input type="range" id="alpha" min="0" max="90" value="0">
+  </div>
+
+  <div class="grp" style="padding-bottom:3px"><b>Annotations</b></div>
+  <div id="groups"></div>
+  <div id="foot"><span id="shown"></span>
+    <span><button id="all">all</button> <button id="none">none</button></span>
+  </div>
+</aside>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+const DATA = __DATA__;
+const GROUP_COLOUR = __COLOURS__;
+const scene = new THREE.Scene();
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+stage.appendChild(renderer.domElement);
+
+const overlay = new CSS2DRenderer();
+overlay.domElement.style.cssText = 'position:fixed;inset:0;pointer-events:none';
+stage.appendChild(overlay.domElement);
+
+const d = DATA.bbox.diagonal;
+const c = DATA.bbox.min.map((v, i) => (v + DATA.bbox.max[i]) / 2);
+const camera = new THREE.PerspectiveCamera(36, 1, d / 500, d * 60);
+camera.position.set(c[0] + d * 0.8, c[1] - d * 1.0, c[2] + d * 0.62);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, overlay.domElement);
+controls.target.set(...c); controls.enableDamping = true; controls.dampingFactor = 0.09;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a9099, 2.5));
+const key = new THREE.DirectionalLight(0xffffff, 1.7); key.position.set(1, -1.3, 1.5);
+const fill = new THREE.DirectionalLight(0xffffff, 0.6); fill.position.set(-1.2, 0.8, -0.3);
+scene.add(key, fill);
+
+// --- part ---------------------------------------------------------------
+const partGroup = new THREE.Group(); scene.add(partGroup);
+const edgeGroup = new THREE.Group(); edgeGroup.visible = false; scene.add(edgeGroup);
+const meshes = [], original = new Map();
+const PLAIN = new THREE.Color(0xc9ced4);
+
+const bin = Uint8Array.from(atob(DATA.glb), ch => ch.charCodeAt(0));
+new GLTFLoader().parse(bin.buffer, '', gltf => {
+  // Fit whatever arrives onto the coordinate space the annotations use: a glTF
+  // written from a document that knows its units comes back in metres.
+  const got = new THREE.Box3().setFromObject(gltf.scene);
+  const want = new THREE.Box3(new THREE.Vector3(...DATA.bbox.min), new THREE.Vector3(...DATA.bbox.max));
+  const gs = got.getSize(new THREE.Vector3()), ws = want.getSize(new THREE.Vector3());
+  const k = Math.max(gs.x, gs.y, gs.z) > 1e-9 ? Math.max(ws.x, ws.y, ws.z) / Math.max(gs.x, gs.y, gs.z) : 1;
+  if (Math.abs(k - 1) > 1e-3) gltf.scene.scale.setScalar(k);
+  gltf.scene.updateMatrixWorld(true);
+  const now = new THREE.Box3().setFromObject(gltf.scene);
+  gltf.scene.position.add(want.getCenter(new THREE.Vector3()).sub(now.getCenter(new THREE.Vector3())));
+  partGroup.add(gltf.scene);
+
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse(o => {
+    if (!o.isMesh) return;
+    o.material = o.material.clone();
+    o.material.side = THREE.DoubleSide;
+    o.material.metalness = 0.04; o.material.roughness = 0.6;
+    original.set(o, o.material.color.clone());
+    meshes.push(o);
+    const eg = new THREE.EdgesGeometry(o.geometry, 25);
+    const line = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x4a5058 }));
+    o.updateMatrixWorld(true); line.applyMatrix4(o.matrixWorld);
+    edgeGroup.add(line);
+  });
+  applyLook();
+});
+
+// --- helpers ------------------------------------------------------------
+const boxHelper = new THREE.Box3Helper(
+  new THREE.Box3(new THREE.Vector3(...DATA.bbox.min), new THREE.Vector3(...DATA.bbox.max)),
+  0x9aa3ad);
+boxHelper.visible = false; scene.add(boxHelper);
+const axes = new THREE.AxesHelper(d * 0.18); axes.visible = false; scene.add(axes);
+
+// --- PMI ----------------------------------------------------------------
+const byGroup = new Map();
+const placedLabels = [];
+for (const a of DATA.labels) {
+  const el = document.createElement('div');
+  el.className = 'pmi'; el.style.color = GROUP_COLOUR[a.group] || '#555';
+  const why = a.detail ? `<span class="why">${a.detail}</span>` : '';
+  let inner;
+  if (a.kind === 'frame') {
+    inner = `<span class="fcf">` +
+      a.cells.map((c, i) => `<span${i === 0 ? ' class="sym"' : ''}>${c}</span>`).join('') +
+      `</span>${why}`;
+  } else if (a.kind === 'datum') {
+    inner = `<span class="datum">${a.cells[0]}</span>${why}`;
+  } else {
+    let tol = '';
+    if (a.tolerance && a.tolerance.style === 'symmetric') {
+      tol = `<span class="tolsym">${a.tolerance.upper}</span>`;
+    } else if (a.tolerance) {
+      tol = `<span class="tolpair"><span>${a.tolerance.upper}</span>` +
+            `<span>${a.tolerance.lower}</span></span>`;
+    }
+    inner = `${a.cells[0]}${tol}` +
+      (a.cells.length > 1 ? ` <span class="sub">${a.cells.slice(1).join(' ')}</span>` : '') + why;
+  }
+  el.innerHTML = `<span class="pmi-in">${inner}</span>`;
+  const tag = new CSS2DObject(el);
+  const near = new THREE.Vector3(...(a.origin));
+  tag.position.copy(near); scene.add(tag);
+
+  const mat = new THREE.LineBasicMaterial({
+    color: new THREE.Color(GROUP_COLOUR[a.group] || '#555'), transparent: true, opacity: 0.75 });
+  const pts = [near, new THREE.Vector3(...a.anchor)];
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+  scene.add(line);
+
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(d * 0.003, 10, 8),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(GROUP_COLOUR[a.group] || '#555') }));
+  dot.position.set(...a.anchor); scene.add(dot);
+
+  if (!byGroup.has(a.group)) byGroup.set(a.group, { colour: GROUP_COLOUR[a.group] || '#555', items: [] });
+  byGroup.get(a.group).items.push({ el, line, dot });
+  placedLabels.push({
+    el, tag, line, dot, world: near, inner: el.firstElementChild,
+    out: near.clone().sub(new THREE.Vector3(...a.anchor)).normalize(),
+  });
+}
+
+// --- controls -----------------------------------------------------------
+const hidden = new Set();
+const list = document.getElementById('groups');
+const shown = document.getElementById('shown');
+const total = DATA.labels.length;
+const $ = id => document.getElementById(id);
+
+function applyPmi() {
+  for (const [fam, g] of byGroup) {
+    const off = hidden.has(fam);
+    for (const it of g.items) {
+      it.el.classList.toggle('hidden', off);
+      if (off) { it.line.visible = false; it.dot.visible = false; }
+    }
+  }
+  for (const r of list.children) r.classList.toggle('off', hidden.has(r.dataset.fam));
+  const n = total - [...hidden].reduce((s, f) => s + byGroup.get(f).items.length, 0);
+  shown.textContent = `${n} of ${total}`;
+}
+
+function applyLook() {
+  const a = $('alpha').valueAsNumber / 100;
+  const colour = $('cbColour').checked;
+  for (const m of meshes) {
+    m.material.color.copy(colour ? original.get(m) : PLAIN);
+    m.material.transparent = a > 0;
+    m.material.opacity = 1 - a;
+    m.material.depthWrite = a === 0;
+    m.material.needsUpdate = true;
+  }
+  partGroup.visible = $('cbPart').checked;
+  edgeGroup.visible = $('cbEdges').checked;
+  boxHelper.visible = $('cbBox').checked;
+  axes.visible = $('cbOrigin').checked;
+  document.documentElement.dataset.theme = $('cbDark').checked ? 'dark' : 'light';
+}
+
+for (const [fam, g] of [...byGroup].sort((x, y) => y[1].items.length - x[1].items.length)) {
+  const b = document.createElement('button');
+  b.className = 'row'; b.dataset.fam = fam;
+  b.innerHTML = `<span class="sw" style="background:${g.colour}"></span>` +
+                `<span class="nm">${fam.replace(/_/g, ' ')}</span>` +
+                `<span class="ct">${g.items.length}</span>`;
+  b.onclick = () => { hidden.has(fam) ? hidden.delete(fam) : hidden.add(fam); applyPmi(); };
+  list.appendChild(b);
+}
+$('all').onclick = () => { hidden.clear(); applyPmi(); };
+$('none').onclick = () => { byGroup.forEach((_, f) => hidden.add(f)); applyPmi(); };
+for (const id of ['cbPart', 'cbEdges', 'cbColour', 'cbBox', 'cbOrigin', 'cbDark', 'cbFacing'])
+  $(id).onchange = applyLook;
+$('alpha').oninput = applyLook;
+$('sub').textContent = `${total} annotations · ${byGroup.size} kinds`;
+applyPmi(); applyLook();
+
+// --- loop ---------------------------------------------------------------
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h); overlay.setSize(w, h);
+}
+addEventListener('resize', resize); resize();
+// Labels sit beside their feature, so on a crowded part they collide on screen.
+// Push each one vertically off whatever is already placed, nearest the camera
+// first, so the label in front keeps its position and the one behind moves.
+const proj = new THREE.Vector3(), toCam = new THREE.Vector3();
+function declutter() {
+  const w = innerWidth, h = innerHeight;
+  const cull = document.getElementById('cbFacing').checked;
+  const rows = [];
+  for (const L of placedLabels) {
+    if (L.el.classList.contains('hidden')) { L.inner.style.transform = ''; continue; }
+
+    // A feature pointing away from the camera is on the far side of the part.
+    // Its label would otherwise float over geometry it does not belong to,
+    // and on a part with many features that is most of the clutter.
+    const away = cull &&
+      toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < 0.12;
+    L.line.visible = !away; L.dot.visible = !away;
+    if (away) { L.el.style.visibility = 'hidden'; continue; }
+
+    proj.copy(L.world).project(camera);
+    if (proj.z > 1) { L.el.style.visibility = 'hidden'; continue; }
+    L.el.style.visibility = '';
+    rows.push({
+      L, depth: proj.z,
+      x: (proj.x * 0.5 + 0.5) * w, y: (-proj.y * 0.5 + 0.5) * h,
+      bw: L.inner.offsetWidth || 90, bh: (L.inner.offsetHeight || 15) + 3,
+    });
+  }
+  rows.sort((a, b) => a.depth - b.depth);
+  const taken = [];
+  for (const r of rows) {
+    let dy = 0;
+    for (let step = 0; step < 40; step++) {
+      const top = r.y + dy - r.bh / 2, bot = top + r.bh;
+      const clash = taken.some(t =>
+        !(r.x + 9 + r.bw <= t.x || t.x + t.bw <= r.x + 9 || bot <= t.top || t.bot <= top));
+      if (!clash) break;
+      dy = dy >= 0 ? -(dy + r.bh) : -dy;      // alternate above and below
+    }
+    taken.push({ x: r.x + 9, bw: r.bw, top: r.y + dy - r.bh / 2, bot: r.y + dy + r.bh / 2 });
+    r.L.inner.style.transform = `translate(9px, calc(-50% + ${dy.toFixed(1)}px))`;
+  }
+}
+
+let frame = 0;
+(function tick() {
+  requestAnimationFrame(tick);
+  controls.update();
+  renderer.render(scene, camera);
+  overlay.render(scene, camera);
+  if ((frame++ & 1) === 0) declutter();
+})();
+</script>
+</body>
+</html>

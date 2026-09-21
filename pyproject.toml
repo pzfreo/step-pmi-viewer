@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "step-pmi-viewer"
+version = "0.1.0"
+description = "View the PMI in a STEP file as a self-contained web page"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Paul Fremantle", email = "pzfreo@gmail.com" }]
+requires-python = ">=3.10,<3.15"
+dependencies = ["build123d>=0.9,<0.12"]
+keywords = ["cad", "step", "ap242", "pmi", "gd&t", "viewer", "three.js"]
+
+[project.urls]
+Repository = "https://github.com/pzfreo/step-pmi-viewer"
+
+[project.scripts]
+step-pmi-viewer = "step_pmi_viewer.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.15,<2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/step_pmi_viewer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = false
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["OCP.*", "build123d.*", "numpy.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
