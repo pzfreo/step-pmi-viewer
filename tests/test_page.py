@@ -106,8 +106,30 @@ def test_the_cube_snaps_to_the_six_standard_views(scene):
         assert f"['{face}', [" in html
     # BoxGeometry's material order is +X, -X, +Y, -Y, +Z, -Z; the click uses it.
     assert "CUBE_FACES[hit.face.materialIndex][1]" in html
-    # OrbitControls listens on the same element, so the cube captures first.
-    assert "}, true);" in html
+
+
+def test_the_part_centres_in_the_clear_area(scene):
+    """The panel covers the right of the canvas, so centring on the window puts
+    the part off to one side."""
+    html = render(scene)
+    assert "camera.setViewOffset(w, h, Math.min(PANEL_PX, w * 0.35) / 2, 0, w, h)" in html
+
+
+def test_orbit_listens_where_pointer_events_arrive(scene):
+    """The label overlay is pointer-events:none, so controls bound to it never
+    see a drag on the part."""
+    html = render(scene)
+    assert "new OrbitControls(camera, stage)" in html
+    assert "OrbitControls(camera, overlay" not in html
+
+
+def test_dragging_on_the_cube_still_orbits(scene):
+    """Swallowing the press would stop a drag on the cube turning the part."""
+    html = render(scene)
+    assert "event.stopPropagation()" not in html
+    # The snap is decided on release, and only if the pointer stayed put.
+    assert "addEventListener('pointerup'" in html
+    assert "> 4) return;" in html
 
 
 def test_zoom_controls_are_wired_up(scene):

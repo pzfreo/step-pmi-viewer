@@ -81,8 +81,9 @@
   .pmi.hidden { display: none; }
 
   /* Orientation cube and zoom, bottom right, clear of the panel. */
-  /* Clear of the cube, which the canvas draws in the bottom right corner. */
-  #nav { position: fixed; right: 14px; bottom: 106px; display: flex;
+  /* Bottom left: the panel owns the right edge for its whole height.
+     Sits above the cube, which the canvas draws in the same corner. */
+  #nav { position: fixed; left: 14px; bottom: 106px; display: flex;
          flex-direction: column; align-items: center; gap: 6px; z-index: 9; }
   #zoom { display: flex; gap: 4px; }
   #zoom button {
@@ -212,7 +213,10 @@ const c = DATA.bbox.min.map((v, i) => (v + DATA.bbox.max[i]) / 2);
 const camera = new THREE.PerspectiveCamera(36, 1, d / 500, d * 60);
 camera.position.set(c[0] + d * 0.8, c[1] - d * 1.0, c[2] + d * 0.62);
 camera.up.set(0, 0, 1);
-const controls = new OrbitControls(camera, overlay.domElement);
+// On the stage, not the label overlay: the overlay is pointer-events:none, so it
+// never sees a pointerdown except one that started on a label, and dragging the
+// part or the cube did nothing at all.
+const controls = new OrbitControls(camera, stage);
 controls.target.set(...c); controls.enableDamping = true; controls.dampingFactor = 0.09;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8a9099, 2.5));
@@ -504,7 +508,7 @@ applyView(); applyLook();
 // --- orientation cube ---------------------------------------------------
 // A cube in the corner showing which way the part is facing, whose faces snap
 // the camera to a standard view. Drawn in its own scene over the main one.
-const CUBE_PX = 84;
+const CUBE_PX = 84, CUBE_EDGE = 14;
 const cubeScene = new THREE.Scene();
 const cubeCamera = new THREE.OrthographicCamera(-1.5, 1.5, 1.5, -1.5, 0.1, 20);
 cubeCamera.position.set(0, 0, 6);
@@ -550,20 +554,34 @@ function lookFrom(direction) {
   controls.update();
 }
 
-// Captured on the stage, above both the canvas and the label overlay, so the
-// cube claims the click before OrbitControls can read it as the start of a drag.
+// A press on the cube is only a snap if it stays put. Swallowing it outright
+// would stop a drag there orbiting the part, which is what a cube invites.
 const cubeRay = new THREE.Raycaster();
-stage.addEventListener('pointerdown', event => {
-  const x = event.clientX, y = event.clientY;
-  const left = innerWidth - CUBE_PX - 14, bottom = 14;
-  const top = innerHeight - bottom - CUBE_PX;
-  if (x < left || x > left + CUBE_PX || y < top || y > top + CUBE_PX) return;
-  event.stopPropagation();
+let pressedOnCube = null;
+
+function faceAt(x, y) {
+  const left = CUBE_EDGE, top = innerHeight - CUBE_EDGE - CUBE_PX;
+  if (x < left || x > left + CUBE_PX || y < top || y > top + CUBE_PX) return null;
   cubeRay.setFromCamera(new THREE.Vector2(
     ((x - left) / CUBE_PX) * 2 - 1, -((y - top) / CUBE_PX) * 2 + 1), cubeCamera);
   const hit = cubeRay.intersectObject(cube, false)[0];
-  if (hit) lookFrom(CUBE_FACES[hit.face.materialIndex][1]);
+  return hit ? CUBE_FACES[hit.face.materialIndex][1] : null;
+}
+
+stage.addEventListener('pointerdown', event => {
+  pressedOnCube = faceAt(event.clientX, event.clientY) &&
+                  { x: event.clientX, y: event.clientY };
 }, true);
+
+addEventListener('pointerup', event => {
+  const press = pressedOnCube;
+  pressedOnCube = null;
+  if (!press) return;
+  // The cube has turned under a drag, so re-read the face where the press began.
+  if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) return;
+  const face = faceAt(press.x, press.y);
+  if (face) lookFrom(face);
+});
 
 // --- zoom ---------------------------------------------------------------
 function dolly(factor) {
@@ -589,9 +607,17 @@ $('zoomOut').onclick = () => dolly(1.25);
 $('zoomFit').onclick = fit;
 
 // --- loop ---------------------------------------------------------------
+// The panel covers the right of the canvas, so the centre of the window is not
+// the centre of what you can see. Shift the frustum left by half the panel to
+// put the part in the middle of the clear area -- and keep the canvas full
+// width, so the labels, which project through the same matrix, still line up.
+const PANEL_PX = 236;
+
 function resize() {
   const w = innerWidth, h = innerHeight;
-  camera.aspect = w / h; camera.updateProjectionMatrix();
+  camera.aspect = w / h;
+  camera.setViewOffset(w, h, Math.min(PANEL_PX, w * 0.35) / 2, 0, w, h);
+  camera.updateProjectionMatrix();
   renderer.setSize(w, h); overlay.setSize(w, h);
   for (const m of leaderMaterials) m.resolution.set(w, h);
 }
@@ -684,10 +710,9 @@ let frame = 0;
 
   // The cube shows the camera's orientation, so it carries the inverse rotation.
   cube.quaternion.copy(camera.quaternion).invert();
-  const left = innerWidth - CUBE_PX - 14;
   renderer.setScissorTest(true);
-  renderer.setViewport(left, 14, CUBE_PX, CUBE_PX);
-  renderer.setScissor(left, 14, CUBE_PX, CUBE_PX);
+  renderer.setViewport(CUBE_EDGE, CUBE_EDGE, CUBE_PX, CUBE_PX);
+  renderer.setScissor(CUBE_EDGE, CUBE_EDGE, CUBE_PX, CUBE_PX);
   renderer.autoClear = false;   // float the cube over the part, not over a hole
   renderer.clearDepth();
   renderer.render(cubeScene, cubeCamera);
