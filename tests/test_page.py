@@ -44,3 +44,14 @@ def test_unknown_kinds_still_get_a_colour():
 def test_title_defaults_to_the_part_name(scene):
     assert scene.name in render(scene)
     assert "A Better Title" in render(scene, "A Better Title")
+
+
+def test_a_caller_can_supply_its_own_palette(scene):
+    import json
+    import re
+
+    html = render(scene, colours={"dimension": "#ff00ff", "holes": "#00ff00"})
+    colours = json.loads(re.search(r"const GROUP_COLOUR = (\{.*?\});\n", html, re.S).group(1))
+    assert colours["dimension"] == "#ff00ff"
+    assert colours["holes"] == "#00ff00"
+    assert colours["datum"] == "#2e8b57"

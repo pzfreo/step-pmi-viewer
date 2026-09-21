@@ -30,8 +30,17 @@ def colour_for(group: str) -> str:
     return GROUP_COLOUR.get(group, FALLBACK_COLOUR)
 
 
-def render(scene: Scene, title: str | None = None) -> str:
-    """The complete HTML page for ``scene``."""
+def render(
+    scene: Scene,
+    title: str | None = None,
+    colours: dict[str, str] | None = None,
+) -> str:
+    """The complete HTML page for ``scene``.
+
+    ``colours`` overrides the colour of any annotation group, so a caller whose
+    groups mean something other than dimension/tolerance/datum -- recognised
+    feature families, say -- can supply its own palette.
+    """
     payload = {
         "part": scene.name,
         "bbox": {
@@ -42,19 +51,25 @@ def render(scene: Scene, title: str | None = None) -> str:
         "labels": [a.to_dict() for a in scene.annotations],
         "glb": base64.b64encode(scene.glb).decode(),
     }
-    colours = dict(GROUP_COLOUR)
+    palette = dict(GROUP_COLOUR)
+    palette.update(colours or {})
     for group in scene.counts():
-        colours.setdefault(group, FALLBACK_COLOUR)
+        palette.setdefault(group, FALLBACK_COLOUR)
 
     return (
         TEMPLATE.read_text()
         .replace("__DATA__", json.dumps(payload))
-        .replace("__COLOURS__", json.dumps(colours))
+        .replace("__COLOURS__", json.dumps(palette))
         .replace("__PART__", title or scene.name)
     )
 
 
-def write(scene: Scene, destination: Path | str, title: str | None = None) -> Path:
+def write(
+    scene: Scene,
+    destination: Path | str,
+    title: str | None = None,
+    colours: dict[str, str] | None = None,
+) -> Path:
     destination = Path(destination)
-    destination.write_text(render(scene, title))
+    destination.write_text(render(scene, title, colours))
     return destination
