@@ -7,3 +7,5 @@ __pycache__/
 dist/
 *.html
 !src/step_pmi_viewer/*.html
+web/*.whl
+!web/index.html

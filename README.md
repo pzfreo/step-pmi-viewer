@@ -41,6 +41,25 @@ uv tool install step-pmi-viewer
 
 `build123d` supplies the OCCT kernel through OCP; nothing else is needed.
 
+## In the browser
+
+`web/index.html` is the same reader running client side: Pyodide loads OCCT
+compiled to WebAssembly, converts the STEP file you drop on the page, and shows
+the page the CLI would have written. The file never leaves the tab.
+
+```bash
+uv build --wheel --out-dir web   # the page installs this wheel through micropip
+python -m http.server -d web     # over http, so micropip can fetch it
+```
+
+The WebAssembly OCCT comes from [OCP.wasm](https://github.com/yeicor/OCP.wasm).
+The first load pulls about 35 MB of Pyodide and OCCT and then caches it;
+CTC-01 converts in a second or so, into a page identical byte for byte to the
+one the CLI writes. Two pins at the top of the file belong together: the Pyodide
+version, and the OCCT wheel, which stays on the 7.9 line because OCP 8 renames
+the collection types the reader imports. Conversion runs on the main thread, so
+a large part stops the tab while it is read.
+
 ## Two things OCCT gets wrong, worked around here
 
 **Tolerance magnitudes read as zero.** `GetValue()` on a geometric tolerance
