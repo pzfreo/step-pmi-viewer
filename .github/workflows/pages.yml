@@ -25,7 +25,7 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv build --wheel --out-dir web
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
