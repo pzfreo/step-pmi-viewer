@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>step-pmi-viewer</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://files.pythonhosted.org" crossorigin>
+<link rel="preconnect" href="https://pypi.org">
+<script defer src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
 <style>
   :root {
     --bg: #ffffff; --panel: #f7f8fa; --ink: #1a1d21; --muted: #707880; --line: #d9dee4;
@@ -24,6 +28,10 @@
   }
   header b { font-size: 13px; font-weight: 650; }
   #status { color: var(--muted); flex: 1; }
+  #bar { width: 130px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  #bar i { display: block; height: 100%; width: 0; background: #2f6fb5; transition: width .15s linear; }
+  #bar.busy i { width: 45%; transition: none; animation: sweep 1.1s ease-in-out infinite; }
+  @keyframes sweep { from { transform: translateX(-110%); } to { transform: translateX(245%); } }
   #status.bad { color: #c0392b; }
   button, label.file {
     font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 5px;
@@ -49,6 +57,7 @@
 <header>
   <b>step-pmi-viewer</b>
   <span id="status">starting…</span>
+  <div id="bar"><i id="fill"></i></div>
   <label class="file">choose a STEP file<input id="file" type="file" accept=".stp,.step,.STP,.STEP"></label>
   <button id="save" disabled>save page</button>
 </header>
@@ -61,12 +70,11 @@
   <iframe id="view" title="the part and its PMI"></iframe>
 </main>
 
-<script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
 <script>
 // OCCT for Pyodide comes from yeicor/OCP.wasm, whose wheels are built against one
 // Pyodide ABI at a time: bump the loader above and this pin together. Stay on the
 // 7.9 line -- OCP 8 renames the collection types the reader imports.
-const OCP_WHEEL = "cadquery-ocp-novtk-OCP.wasm==7.9.3.1.post202609191800";
+const OCP = { name: "cadquery-ocp-novtk-OCP.wasm", version: "7.9.3.1.post202609191800" };
 // Built with `uv build --wheel --out-dir web`. Installed without its dependencies:
 // build123d is only ever a way to get OCP, and here OCP is already installed.
 const PACKAGE = "./step_pmi_viewer-0.1.0-py3-none-any.whl";
@@ -84,6 +92,8 @@ def convert(name, data):
 `;
 
 const statusEl = document.getElementById("status");
+const barEl = document.getElementById("bar");
+const fillEl = document.getElementById("fill");
 const fileEl = document.getElementById("file");
 const saveEl = document.getElementById("save");
 const dropEl = document.getElementById("drop");
@@ -102,18 +112,57 @@ const say = (text, bad) => {
 // Let the status paint before a call that holds the thread for seconds.
 const painted = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
 
+// The runtime is about 13 MB and the kernel wheel about 23 MB, and they arrive at
+// the same time, so the bar is the share of those bytes that has landed. Only the
+// wheel can be measured as it comes; the runtime counts when Pyodide is up.
+let runtime = 0, kernel = 0;
+const advance = () => { fillEl.style.width = `${Math.round(100 * (0.35 * runtime + 0.65 * kernel))}%`; };
+// Unpacking the kernel and reading a part both hold the thread, so the bar sweeps
+// instead: the animation runs on the compositor and keeps moving regardless.
+const busy = (on) => {
+  barEl.hidden = !on;
+  barEl.classList.toggle("busy", on);
+  if (on) fillEl.style.width = "";
+};
+
+/** The OCCT wheel, downloaded by hand so its progress can be shown. */
+async function fetchKernel() {
+  const release = await fetch(`https://pypi.org/pypi/${OCP.name}/${OCP.version}/json`);
+  const wheel = (await release.json()).urls.find(u => u.filename.endsWith(".whl"));
+  const reader = (await fetch(wheel.url)).body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    kernel = Math.min(got / wheel.size, 1);
+    advance();
+  }
+  const bytes = new Uint8Array(got);
+  let at = 0;
+  for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.length; }
+  return { name: wheel.filename, bytes };
+}
+
 async function boot() {
-  say("loading Python…");
+  say("loading Python and the CAD kernel…");
   const pyodide = await loadPyodide();
-  say("loading the CAD kernel (23 MB)…");
+  runtime = 1;
+  advance();
   await pyodide.loadPackage("micropip");
   const micropip = pyodide.pyimport("micropip");
-  await micropip.install(OCP_WHEEL);
-  say("loading step-pmi-viewer…");
+  const wheel = await kernelWheel;
+  say("installing…");
+  busy(true);
+  pyodide.FS.writeFile("/" + wheel.name, wheel.bytes);
   // callKwargs, or the options object would land on micropip.install's second positional.
+  await micropip.install.callKwargs("emfs:/" + wheel.name, { deps: false });
   await micropip.install.callKwargs(PACKAGE, { deps: false });
   await pyodide.runPythonAsync(GLUE);
   convert = pyodide.globals.get("convert");
+  busy(false);
   say("ready — choose a STEP file");
   if (pending) show(pending);
 }
@@ -122,15 +171,18 @@ async function show(file) {
   if (!convert) { pending = file; say(stage); return; }
   pending = null;
   say(`reading ${file.name}…`);
+  busy(true);
   await painted();
   let result;
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     result = JSON.parse(convert(file.name, bytes));
   } catch (err) {
+    busy(false);
     say(String(err.message || err).trim().split("\n").pop(), true);
     return;
   }
+  busy(false);
   if (saved) URL.revokeObjectURL(saved.url);
   saved = {
     url: URL.createObjectURL(new Blob([result.html], { type: "text/html" })),
@@ -163,7 +215,12 @@ document.addEventListener("drop", e => {
   if (e.dataTransfer.files[0]) show(e.dataTransfer.files[0]);
 });
 
-boot().catch(err => say(String(err.message || err), true));
+// Downloading starts with the page; Pyodide itself is only up once it is parsed.
+const kernelWheel = fetchKernel();
+addEventListener("DOMContentLoaded", () => boot().catch(err => {
+  busy(false);
+  say(String(err.message || err), true);
+}));
 </script>
 </body>
 </html>
