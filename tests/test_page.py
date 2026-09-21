@@ -147,3 +147,18 @@ def test_the_viewer_script_is_balanced(scene):
     assert js.count("{") == js.count("}")
     assert js.count("(") == js.count(")")
     assert js.count("[") == js.count("]")
+
+
+def test_the_panel_body_scrolls(scene):
+    """A part with many families runs off a short window otherwise."""
+    html = render(scene)
+    assert "#panel .body { flex: 1; min-height: 0; overflow-y: auto;" in html
+    # The title and the all/none footer sit outside it, so they stay put.
+    assert html.index("<h1>") < html.index('<div class="body">') < html.index('<div id="foot">')
+
+
+def test_drawn_pmi_has_one_control(scene):
+    """It had two: a Display checkbox and the Show preset, which disagreed."""
+    html = render(scene)
+    assert "cbGraphic" not in html
+    assert "graphicGroup.visible = drawnWanted();" in html
