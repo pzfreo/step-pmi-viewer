@@ -78,6 +78,9 @@ const OCP = { name: "cadquery-ocp-novtk-OCP.wasm", version: "7.9.3.1.post2026091
 // Built with `uv build --wheel --out-dir web`. Installed without its dependencies:
 // build123d is only ever a way to get OCP, and here OCP is already installed.
 const PACKAGE = "./step_pmi_viewer-0.1.0-py3-none-any.whl";
+// The wheel keeps its name across releases, so a browser that has seen one will
+// happily reuse it and a fix never reaches the page. Fetch it here, where the
+// cache can be bypassed, and install it off the Emscripten filesystem.
 
 const GLUE = `
 import json, pathlib, tempfile
@@ -159,7 +162,10 @@ async function boot() {
   pyodide.FS.writeFile("/" + wheel.name, wheel.bytes);
   // callKwargs, or the options object would land on micropip.install's second positional.
   await micropip.install.callKwargs("emfs:/" + wheel.name, { deps: false });
-  await micropip.install.callKwargs(PACKAGE, { deps: false });
+  const own = PACKAGE.split("/").pop();
+  pyodide.FS.writeFile("/" + own,
+    new Uint8Array(await (await fetch(PACKAGE, { cache: "reload" })).arrayBuffer()));
+  await micropip.install.callKwargs("emfs:/" + own, { deps: false });
   await pyodide.runPythonAsync(GLUE);
   convert = pyodide.globals.get("convert");
   busy(false);

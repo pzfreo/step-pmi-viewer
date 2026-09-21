@@ -60,3 +60,10 @@ def test_both_routes_produce_the_same_page(page, ctc01, tmp_path):
         return re.sub(r'"glb":\s*"[A-Za-z0-9+/=]*"', '"glb":""', html)
 
     assert without_geometry(in_browser) == without_geometry(locally)
+
+
+def test_the_package_wheel_is_fetched_past_the_cache():
+    """Its filename never changes, so a browser that has seen one version will
+    reuse it and a fix never reaches the page."""
+    page = (Path(__file__).parents[1] / "web" / "index.html").read_text()
+    assert 'fetch(PACKAGE, { cache: "reload" })' in page
