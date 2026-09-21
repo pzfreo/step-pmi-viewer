@@ -35,3 +35,28 @@ def test_the_glue_converts_a_step_file(page, ctc01):
     assert result["name"] == ctc01.stem
     assert result["counts"] == {"dimension": 8, "tolerance": 6, "datum": 3}
     assert result["html"].lstrip().startswith("<!doctype html>")
+
+
+def test_both_routes_produce_the_same_page(page, ctc01, tmp_path):
+    """The CLI and the browser must not drift apart.
+
+    Both call read_scene then render, so the page a reader gets should not
+    depend on which one produced it. Asserting that here means a change made
+    for one route cannot quietly diverge the other.
+    """
+    from step_pmi_viewer import read_scene, render
+
+    glue = re.search(r"const GLUE = `(.*?)`;", page, re.S).group(1)
+    scope: dict = {}
+    exec(glue, scope)
+    in_browser = json.loads(scope["convert"](ctc01.name, ctc01.read_bytes()))["html"]
+
+    scene = read_scene(ctc01, tmp_path / "part.glb")
+    locally = render(scene)
+
+    # The glTF is re-meshed per call and floating point need not repeat exactly,
+    # so compare the annotations and the page around them rather than the bytes.
+    def without_geometry(html: str) -> str:
+        return re.sub(r'"glb":\s*"[A-Za-z0-9+/=]*"', '"glb":""', html)
+
+    assert without_geometry(in_browser) == without_geometry(locally)
