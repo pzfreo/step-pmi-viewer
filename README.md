@@ -52,6 +52,9 @@ uv build --wheel --out-dir web   # the page installs this wheel through micropip
 python -m http.server -d web     # over http, so micropip can fetch it
 ```
 
+A push to `main` builds that wheel again and publishes `web/` to GitHub Pages,
+at <https://pzfreo.github.io/step-pmi-viewer/>.
+
 The WebAssembly OCCT comes from [OCP.wasm](https://github.com/yeicor/OCP.wasm).
 The first load pulls about 35 MB of Pyodide and OCCT and then caches it;
 CTC-01 converts in a second or so, into a page identical byte for byte to the
