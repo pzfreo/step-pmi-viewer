@@ -89,12 +89,29 @@ def _to_glb(
 GRAPHIC_DEFLECTION = 0.0006
 
 
+def _static(owner: Any, name: str) -> Any:
+    """A bound static, under whichever name the OCP build gives it.
+
+    Desktop OCP binds ``TopoDS`` as a class whose statics carry an ``_s`` suffix.
+    OCP.wasm binds it as a module of plain functions, so the page on GitHub Pages
+    failed on the first file it was given with ``module 'OCP.TopoDS.TopoDS' has no
+    attribute 'Edge_s'``. Every other static this module calls is reached before
+    that point and so is known to resolve in both builds; these three are not.
+    """
+    return getattr(owner, f"{name}_s", None) or getattr(owner, name)
+
+
+_as_edge = _static(TopoDS, "Edge")
+_as_face = _static(TopoDS, "Face")
+_triangulation = _static(BRep_Tool, "Triangulation")
+
+
 def _polylines(shape: Any, deflection: float) -> tuple[tuple[Vec, ...], ...]:
     """The edges of a presentation shape, sampled into polylines."""
     lines: list[tuple[Vec, ...]] = []
     explorer = TopExp_Explorer(shape, TopAbs_EDGE)
     while explorer.More():
-        edge = TopoDS.Edge_s(explorer.Current())
+        edge = _as_edge(explorer.Current())
         explorer.Next()
         try:
             curve = BRepAdaptor_Curve(edge)
@@ -119,10 +136,10 @@ def _mesh(shape: Any) -> tuple[tuple[float, ...], tuple[int, ...]]:
     indices: list[int] = []
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
     while explorer.More():
-        face = TopoDS.Face_s(explorer.Current())
+        face = _as_face(explorer.Current())
         explorer.Next()
         location = TopLoc_Location()
-        triangulation = BRep_Tool.Triangulation_s(face, location)
+        triangulation = _triangulation(face, location)
         if triangulation is None:
             continue
         transform = location.Transformation()

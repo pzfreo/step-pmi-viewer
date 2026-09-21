@@ -89,3 +89,16 @@ def test_a_view_only_names_annotations_we_drew(scene):
     """A view referring to something we skipped would filter to nothing."""
     for view in scene.views:
         assert view.shows, view.name
+
+
+def test_topods_is_reached_through_the_name_either_build_has():
+    """OCP.wasm binds TopoDS as a module of plain functions, desktop OCP as a
+    class of _s statics. Naming either directly breaks the other."""
+    from pathlib import Path
+
+    from step_pmi_viewer import reader
+
+    source = Path(reader.__file__).read_text()
+    assert "TopoDS.Edge_s" not in source
+    assert "TopoDS.Face_s" not in source
+    assert "BRep_Tool.Triangulation_s" not in source
