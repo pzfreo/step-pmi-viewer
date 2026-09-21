@@ -75,3 +75,53 @@ def test_repeats_can_be_grouped(scene):
     # The echo keeps neither its text nor its leader.
     assert ".pmi.echo .pmi-in { visibility: hidden; }" in html
     assert "L.line.visible = false; L.dot.visible = false;" in html
+
+
+def test_saved_views_reach_the_page(scene):
+    import json
+    import re
+
+    html = render(scene)
+    payload = json.loads(re.search(r"const DATA = (\{.*?\});\n", html, re.S).group(1))
+    assert len(payload["views"]) == len(scene.views)
+    if scene.views:
+        assert 'name="view"' in html
+
+
+def test_leaders_follow_the_label_text(scene):
+    """With no label to point at, a leader points at nothing -- and over drawn
+    PMI it doubles the author's own leaders."""
+    html = render(scene)
+    assert "function leadersWanted()" in html
+    assert "const leaders = leadersWanted();" in html
+    # Neither the far-side pass nor the repeat pass may switch them back on.
+    assert "L.line.visible = leaders && !away;" in html
+    assert "if (echo || !leaders)" in html
+
+
+def test_the_cube_snaps_to_the_six_standard_views(scene):
+    """The cube is only useful if every face maps to a direction to stand in."""
+    html = render(scene)
+    for face in ("RIGHT", "LEFT", "BACK", "FRONT", "TOP", "BOTTOM"):
+        assert f"['{face}', [" in html
+    # BoxGeometry's material order is +X, -X, +Y, -Y, +Z, -Z; the click uses it.
+    assert "CUBE_FACES[hit.face.materialIndex][1]" in html
+    # OrbitControls listens on the same element, so the cube captures first.
+    assert "}, true);" in html
+
+
+def test_zoom_controls_are_wired_up(scene):
+    html = render(scene)
+    for button in ("zoomIn", "zoomOut", "zoomFit"):
+        assert f'id="{button}"' in html
+        assert f"$('{button}').onclick" in html
+
+
+def test_the_viewer_script_is_balanced(scene):
+    """A stray brace leaves a blank page, which no other test would catch."""
+    import re
+
+    js = re.search(r'<script type="module">(.*?)</script>', render(scene), re.S).group(1)
+    assert js.count("{") == js.count("}")
+    assert js.count("(") == js.count(")")
+    assert js.count("[") == js.count("]")

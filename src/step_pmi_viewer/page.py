@@ -49,6 +49,8 @@ def render(
             "diagonal": scene.diagonal,
         },
         "labels": [a.to_dict() for a in scene.annotations],
+        "views": [v.to_dict() for v in scene.views],
+        "graphics": [g.to_dict() for g in scene.graphics],
         "glb": base64.b64encode(scene.glb).decode(),
     }
     palette = dict(GROUP_COLOUR)

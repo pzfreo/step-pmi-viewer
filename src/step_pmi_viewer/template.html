@@ -80,6 +80,19 @@
   .pmi:hover .why { display: block; }
   .pmi.hidden { display: none; }
 
+  /* Orientation cube and zoom, bottom right, clear of the panel. */
+  /* Clear of the cube, which the canvas draws in the bottom right corner. */
+  #nav { position: fixed; right: 14px; bottom: 106px; display: flex;
+         flex-direction: column; align-items: center; gap: 6px; z-index: 9; }
+  #zoom { display: flex; gap: 4px; }
+  #zoom button {
+    width: 26px; height: 24px; border: 1px solid var(--line); border-radius: 4px;
+    background: var(--panel); color: var(--ink); font: 600 13px/1 ui-sans-serif, sans-serif;
+    cursor: pointer; padding: 0;
+  }
+  #zoom button:hover { background: var(--line); }
+  #zoom button.wide { width: 46px; font-size: 11px; font-weight: 500; }
+
   /* Label detail. Minimal keeps the value a drawing leads with and drops the
      descriptor, the tolerance and the datum references; none leaves the leader
      and its dot, so a feature is still located without being named. */
@@ -119,6 +132,13 @@
 </head>
 <body>
 <div id="stage"></div>
+<div id="nav">
+  <div id="zoom">
+    <button id="zoomIn" title="Zoom in">+</button>
+    <button id="zoomOut" title="Zoom out">−</button>
+    <button id="zoomFit" class="wide" title="Fit the part">fit</button>
+  </div>
+</div>
 <aside id="panel">
   <h1>__PART__<small id="sub"></small></h1>
 
@@ -132,6 +152,14 @@
     <label class="row"><input type="checkbox" id="cbDark"><span class="nm">Dark background</span></label>
     <label class="row"><input type="checkbox" id="cbFacing" checked><span class="nm">Hide far side</span></label>
     <label class="row"><input type="checkbox" id="cbRepeat" checked><span class="nm">Group repeats</span></label>
+    <label class="row" id="rowGraphic" hidden><input type="checkbox" id="cbGraphic"><span class="nm">Drawn PMI</span></label>
+  </div>
+
+  <div class="grp" id="presetGroup" hidden>
+    <b>Show</b>
+    <label class="row"><input type="radio" name="preset" value="semantic" checked><span class="nm">Semantic PMI</span></label>
+    <label class="row"><input type="radio" name="preset" value="drawn"><span class="nm">As drawn</span></label>
+    <label class="row"><input type="radio" name="preset" value="both"><span class="nm">Both</span></label>
   </div>
 
   <div class="grp">
@@ -144,6 +172,11 @@
   <div class="grp">
     <b>Transparency</b>
     <input type="range" id="alpha" min="0" max="90" value="0">
+  </div>
+
+  <div class="grp" id="viewsGroup" hidden>
+    <b>Saved views</b>
+    <div id="views"></div>
   </div>
 
   <div class="grp" style="padding-bottom:3px"><b>Annotations</b></div>
@@ -302,6 +335,60 @@ for (const a of DATA.labels) {
   });
 }
 
+// --- drawn PMI ----------------------------------------------------------
+// The line work an author drew: frames, leaders and the glyphs of the text
+// itself. Rendered as geometry because that is what it is -- there is no value
+// to set in HTML, and in a file carrying only graphic PMI this is the whole
+// annotation.
+const graphicGroup = new THREE.Group();
+graphicGroup.visible = false;
+scene.add(graphicGroup);
+
+for (const g of (DATA.graphics || [])) {
+  const positions = [];
+  for (const line of g.polylines) {
+    for (let i = 0; i + 1 < line.length; i++) {
+      positions.push(...line[i], ...line[i + 1]);
+    }
+  }
+  const tint = new THREE.Color(GROUP_COLOUR[g.group] || '#555');
+  if (positions.length) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    graphicGroup.add(new THREE.LineSegments(
+      geometry, new THREE.LineBasicMaterial({ color: tint })));
+  }
+  // The filled parts -- the glyphs of the text, and arrowheads. Unlit, so they
+  // read as ink at any angle rather than shading like part of the solid.
+  if (g.indices && g.indices.length) {
+    const filled = new THREE.BufferGeometry();
+    filled.setAttribute('position', new THREE.Float32BufferAttribute(g.vertices, 3));
+    filled.setIndex(g.indices);
+    graphicGroup.add(new THREE.Mesh(filled, new THREE.MeshBasicMaterial({
+      color: tint, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    })));
+  }
+}
+if (graphicGroup.children.length) {
+  document.getElementById('rowGraphic').hidden = false;
+  document.getElementById('presetGroup').hidden = false;
+}
+
+// Semantic and drawn PMI say the same things in different ways, so showing both
+// doubles every callout. The preset picks one: "as drawn" is what the author's
+// CAD system put on the model, witness lines and all, which is what a drawing
+// of the part shows.
+function applyPreset(value) {
+  const drawn = value !== 'semantic';
+  const text = value === 'drawn' ? 'none' : 'full';
+  $('cbGraphic').checked = drawn;
+  for (const radio of document.querySelectorAll('input[name=detail]')) {
+    radio.checked = radio.value === text;
+  }
+  applyLook();
+}
+
 // --- controls -----------------------------------------------------------
 // How many features each distinct callout covers, for the "n×" prefix.
 const repeatCount = new Map();
@@ -309,11 +396,33 @@ for (const L of placedLabels) {
   repeatCount.set(L.repeat, (repeatCount.get(L.repeat) || 0) + 1);
 }
 
+// A saved view is the author's grouping of the PMI: which callouts belong
+// together, and where to stand to read them. Null means show everything.
+let activeView = null;
+
 const hidden = new Set();
 const list = document.getElementById('groups');
 const shown = document.getElementById('shown');
 const total = DATA.labels.length;
 const $ = id => document.getElementById(id);
+
+function applyView() {
+  const view = activeView === null ? null : DATA.views[activeView];
+  const shown = view ? new Set(view.shows) : null;
+  placedLabels.forEach((L, i) => { L.outOfView = shown !== null && !shown.has(i); });
+  if (view && view.direction) {
+    // Stand where the view says to stand, looking at the part.
+    const d = DATA.bbox.diagonal;
+    const centre = new THREE.Vector3(...DATA.bbox.min)
+      .add(new THREE.Vector3(...DATA.bbox.max)).multiplyScalar(0.5);
+    const from = new THREE.Vector3(...view.direction).normalize().multiplyScalar(-d);
+    camera.position.copy(centre).sub(from);
+    if (view.up) camera.up.set(...view.up);
+    controls.target.copy(centre);
+    controls.update();
+  }
+  applyPmi();
+}
 
 function applyPmi() {
   for (const [fam, g] of byGroup) {
@@ -341,10 +450,18 @@ function applyLook() {
   partGroup.visible = $('cbPart').checked;
   edgeGroup.visible = $('cbEdges').checked;
   boxHelper.visible = $('cbBox').checked;
+  graphicGroup.visible = $('cbGraphic').checked;
   axes.visible = $('cbOrigin').checked;
   document.documentElement.dataset.theme = $('cbDark').checked ? 'dark' : 'light';
   const detail = document.querySelector('input[name=detail]:checked');
   document.body.dataset.detail = detail ? detail.value : 'full';
+}
+
+// With no label to point at, a leader points at nothing -- and over drawn PMI it
+// doubles the author's own leaders. So leaders follow the text.
+function leadersWanted() {
+  const detail = document.querySelector('input[name=detail]:checked');
+  return !detail || detail.value !== 'none';
 }
 
 for (const [fam, g] of [...byGroup].sort((x, y) => y[1].items.length - x[1].items.length)) {
@@ -359,13 +476,117 @@ for (const [fam, g] of [...byGroup].sort((x, y) => y[1].items.length - x[1].item
 $('all').onclick = () => { hidden.clear(); applyPmi(); };
 $('none').onclick = () => { byGroup.forEach((_, f) => hidden.add(f)); applyPmi(); };
 for (const id of ['cbPart', 'cbEdges', 'cbColour', 'cbBox', 'cbOrigin', 'cbDark',
-                  'cbFacing', 'cbRepeat'])
+                  'cbFacing', 'cbRepeat', 'cbGraphic'])
   $(id).onchange = applyLook;
 $('alpha').oninput = applyLook;
 for (const radio of document.querySelectorAll('input[name=detail]'))
   radio.onchange = applyLook;
+for (const radio of document.querySelectorAll('input[name=preset]'))
+  radio.onchange = () => applyPreset(radio.value);
+if (DATA.views && DATA.views.length) {
+  const box = document.getElementById('views');
+  const choices = [{ name: 'All', index: null }].concat(
+    DATA.views.map((v, i) => ({ name: `${v.name} (${v.shows.length})`, index: i })));
+  for (const choice of choices) {
+    const row = document.createElement('label');
+    row.className = 'row';
+    row.innerHTML = `<input type="radio" name="view"${choice.index === null ? ' checked' : ''}>` +
+                    `<span class="nm">${choice.name}</span>`;
+    row.querySelector('input').onchange = () => { activeView = choice.index; applyView(); };
+    box.appendChild(row);
+  }
+  document.getElementById('viewsGroup').hidden = false;
+}
+
 $('sub').textContent = `${total} annotations · ${byGroup.size} kinds`;
-applyPmi(); applyLook();
+applyView(); applyLook();
+
+// --- orientation cube ---------------------------------------------------
+// A cube in the corner showing which way the part is facing, whose faces snap
+// the camera to a standard view. Drawn in its own scene over the main one.
+const CUBE_PX = 84;
+const cubeScene = new THREE.Scene();
+const cubeCamera = new THREE.OrthographicCamera(-1.5, 1.5, 1.5, -1.5, 0.1, 20);
+cubeCamera.position.set(0, 0, 6);
+
+function faceTexture(text) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#e9edf1';
+  g.fillRect(0, 0, 128, 128);
+  g.strokeStyle = '#98a2ad'; g.lineWidth = 5;
+  g.strokeRect(2.5, 2.5, 123, 123);
+  g.fillStyle = '#2b3138';
+  g.font = '600 26px ui-sans-serif, -apple-system, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, 64, 66);
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 4;
+  return t;
+}
+
+// BoxGeometry orders its materials +X, -X, +Y, -Y, +Z, -Z. Z is up here.
+const CUBE_FACES = [
+  ['RIGHT', [1, 0, 0]], ['LEFT', [-1, 0, 0]],
+  ['BACK', [0, 1, 0]], ['FRONT', [0, -1, 0]],
+  ['TOP', [0, 0, 1]], ['BOTTOM', [0, 0, -1]],
+];
+const cube = new THREE.Mesh(
+  new THREE.BoxGeometry(1.7, 1.7, 1.7),
+  CUBE_FACES.map(([name]) => new THREE.MeshBasicMaterial({ map: faceTexture(name) })));
+cubeScene.add(cube);
+
+const centreOf = () => new THREE.Vector3(...DATA.bbox.min)
+  .add(new THREE.Vector3(...DATA.bbox.max)).multiplyScalar(0.5);
+
+function lookFrom(direction) {
+  const centre = centreOf();
+  const away = camera.position.distanceTo(controls.target) || DATA.bbox.diagonal;
+  // Looking straight down Z, "up" cannot also be Z; use Y, as a plan view does.
+  camera.up.set(...(Math.abs(direction[2]) > 0.9 ? [0, 1, 0] : [0, 0, 1]));
+  camera.position.copy(centre).addScaledVector(new THREE.Vector3(...direction), away);
+  controls.target.copy(centre);
+  controls.update();
+}
+
+// Captured on the stage, above both the canvas and the label overlay, so the
+// cube claims the click before OrbitControls can read it as the start of a drag.
+const cubeRay = new THREE.Raycaster();
+stage.addEventListener('pointerdown', event => {
+  const x = event.clientX, y = event.clientY;
+  const left = innerWidth - CUBE_PX - 14, bottom = 14;
+  const top = innerHeight - bottom - CUBE_PX;
+  if (x < left || x > left + CUBE_PX || y < top || y > top + CUBE_PX) return;
+  event.stopPropagation();
+  cubeRay.setFromCamera(new THREE.Vector2(
+    ((x - left) / CUBE_PX) * 2 - 1, -((y - top) / CUBE_PX) * 2 + 1), cubeCamera);
+  const hit = cubeRay.intersectObject(cube, false)[0];
+  if (hit) lookFrom(CUBE_FACES[hit.face.materialIndex][1]);
+}, true);
+
+// --- zoom ---------------------------------------------------------------
+function dolly(factor) {
+  const offset = camera.position.clone().sub(controls.target);
+  const length = Math.max(DATA.bbox.diagonal * 0.02, offset.length() * factor);
+  camera.position.copy(controls.target).add(offset.setLength(length));
+  controls.update();
+}
+
+function fit() {
+  const centre = centreOf();
+  const size = new THREE.Vector3(...DATA.bbox.max).sub(new THREE.Vector3(...DATA.bbox.min));
+  const reach = Math.max(size.x, size.y, size.z) /
+                (2 * Math.tan((camera.fov * Math.PI) / 360));
+  const direction = camera.position.clone().sub(controls.target).normalize();
+  camera.position.copy(centre).addScaledVector(direction, reach * 1.9);
+  controls.target.copy(centre);
+  controls.update();
+}
+
+$('zoomIn').onclick = () => dolly(1 / 1.25);
+$('zoomOut').onclick = () => dolly(1.25);
+$('zoomFit').onclick = fit;
 
 // --- loop ---------------------------------------------------------------
 function resize() {
@@ -382,16 +603,24 @@ const proj = new THREE.Vector3(), toCam = new THREE.Vector3();
 function declutter() {
   const w = innerWidth, h = innerHeight;
   const cull = document.getElementById('cbFacing').checked;
+  const leaders = leadersWanted();
   let rows = [];
   for (const L of placedLabels) {
-    if (L.el.classList.contains('hidden')) { L.inner.style.transform = ''; continue; }
+    if (!leaders) { L.line.visible = false; L.dot.visible = false; }
+    if (L.el.classList.contains('hidden') || L.outOfView) {
+      L.inner.style.transform = '';
+      if (L.outOfView) { L.line.visible = false; L.dot.visible = false; }
+      L.el.style.visibility = L.outOfView ? 'hidden' : L.el.style.visibility;
+      continue;
+    }
+    if (!leaders) { L.el.style.visibility = ''; continue; }
 
     // A feature pointing away from the camera is on the far side of the part.
     // Its label would otherwise float over geometry it does not belong to,
     // and on a part with many features that is most of the clutter.
     const away = cull &&
       toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < 0.12;
-    L.line.visible = !away; L.dot.visible = !away;
+    L.line.visible = leaders && !away; L.dot.visible = leaders && !away;
     if (away) { L.el.style.visibility = 'hidden'; continue; }
 
     proj.copy(L.world).project(camera);
@@ -422,7 +651,7 @@ function declutter() {
         ? `${repeatCount.get(L.repeat)}\u00d7 ` : '';
       // An echo's leader goes too: a drawing points once and says how many,
       // rather than drawing eighteen leaders to eighteen identical blends.
-      if (echo) { L.line.visible = false; L.dot.visible = false; }
+      if (echo || !leaders) { L.line.visible = false; L.dot.visible = false; }
     }
     rows = rows.filter(r => !r.L.el.classList.contains('echo'));
   } else {
@@ -452,6 +681,20 @@ let frame = 0;
   requestAnimationFrame(tick);
   controls.update();
   renderer.render(scene, camera);
+
+  // The cube shows the camera's orientation, so it carries the inverse rotation.
+  cube.quaternion.copy(camera.quaternion).invert();
+  const left = innerWidth - CUBE_PX - 14;
+  renderer.setScissorTest(true);
+  renderer.setViewport(left, 14, CUBE_PX, CUBE_PX);
+  renderer.setScissor(left, 14, CUBE_PX, CUBE_PX);
+  renderer.autoClear = false;   // float the cube over the part, not over a hole
+  renderer.clearDepth();
+  renderer.render(cubeScene, cubeCamera);
+  renderer.autoClear = true;
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, innerWidth, innerHeight);
+
   overlay.render(scene, camera);
   if ((frame++ & 1) === 0) declutter();
 })();

@@ -73,3 +73,19 @@ def test_a_file_without_geometry_is_reported(tmp_path):
     empty.write_text("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n")
     with pytest.raises((NoGeometry, Exception)):
         read_scene(empty, tmp_path / "p.glb")
+
+
+def test_saved_views_are_read(scene):
+    """A saved view is the author's grouping of the PMI, as SFA presents it."""
+    assert scene.views
+    view = scene.views[0]
+    assert view.name == "MBD_0"
+    assert view.shows
+    assert all(0 <= i < len(scene.annotations) for i in view.shows)
+    assert view.direction is not None and view.up is not None
+
+
+def test_a_view_only_names_annotations_we_drew(scene):
+    """A view referring to something we skipped would filter to nothing."""
+    for view in scene.views:
+        assert view.shows, view.name

@@ -61,6 +61,59 @@ class Annotation:
         }
 
 
+@dataclass(frozen=True)
+class Graphic:
+    """Annotation geometry an author drew, rather than a value to write.
+
+    AP242 carries most PMI twice: semantically, as a typed value this viewer can
+    set in HTML, and graphically, as the line work a CAD system drew -- frames,
+    leaders, and the glyphs of the text itself. A file may carry only the second,
+    and then the drawn geometry is the annotation.
+    """
+
+    name: str
+    group: str
+    #: Line work -- frames, leaders, witness lines -- each a run of points.
+    polylines: tuple[tuple[Vec, ...], ...] = ()
+    #: Filled areas: the glyphs of the text, and arrowheads. Flat vertex
+    #: coordinates and triangle indices into them.
+    vertices: tuple[float, ...] = ()
+    indices: tuple[int, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "group": self.group,
+            "polylines": [[list(p) for p in line] for line in self.polylines],
+            "vertices": list(self.vertices),
+            "indices": list(self.indices),
+        }
+
+
+@dataclass(frozen=True)
+class SavedView:
+    """A named view of a subset of the PMI, as AP242 stores it.
+
+    A part's annotations are rarely all meant to be read at once; a saved view
+    is the author's grouping of them, together with where to stand to read them.
+    """
+
+    name: str
+    #: Indices into ``Scene.annotations`` that this view shows.
+    shows: tuple[int, ...]
+    #: Where the camera looks from, and which way is up, when it exists.
+    direction: Vec | None = None
+    up: Vec | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "shows": list(self.shows),
+            "direction": list(self.direction) if self.direction else None,
+            "up": list(self.up) if self.up else None,
+        }
+
+
 @dataclass
 class Scene:
     """A part, its bounding box, and everything annotated on it."""
@@ -70,6 +123,8 @@ class Scene:
     bbox_min: Vec
     bbox_max: Vec
     annotations: list[Annotation] = field(default_factory=list)
+    views: list[SavedView] = field(default_factory=list)
+    graphics: list[Graphic] = field(default_factory=list)
 
     @property
     def diagonal(self) -> float:

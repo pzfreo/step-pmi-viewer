@@ -6,27 +6,36 @@ from pathlib import Path
 from typing import Any
 
 from OCP.Bnd import Bnd_Box
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Curve
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepGProp import BRepGProp
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.GCPnts import GCPnts_QuasiUniformDeflection
 from OCP.GProp import GProp_GProps
 from OCP.Message import Message_ProgressRange
 from OCP.RWGltf import RWGltf_CafWriter
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TCollection import TCollection_AsciiString, TCollection_ExtendedString
+from OCP.TCollection import TCollection_AsciiString as _AsciiString
 from OCP.TColStd import TColStd_IndexedDataMapOfStringString
-from OCP.TDF import TDF_LabelSequence
+from OCP.TDF import TDF_LabelSequence, TDF_Tool
 from OCP.TDocStd import TDocStd_Document
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopLoc import TopLoc_Location
+from OCP.TopoDS import TopoDS
 from OCP.XCAFApp import XCAFApp_Application
 from OCP.XCAFDoc import (
     XCAFDoc_Datum,
     XCAFDoc_Dimension,
     XCAFDoc_DocumentTool,
     XCAFDoc_GeomTolerance,
+    XCAFDoc_View,
 )
 
 from .magnitudes import read_magnitudes
-from .model import Annotation, Scene, Tolerance, Vec
+from .model import Annotation, Graphic, SavedView, Scene, Tolerance, Vec
 from .symbols import MATERIAL, characteristic, dimension_text
 
 #: How far off the anchor an annotation's text sits, as a share of the diagonal.
@@ -39,6 +48,13 @@ class NoGeometry(Exception):
 
 def _kind(enum_value: Any) -> str:
     return str(enum_value).split("_")[-1]
+
+
+def _entry(label: Any) -> str:
+    """A label's path in the document, used to match a view's references."""
+    text = _AsciiString()
+    TDF_Tool.Entry_s(label, text)
+    return text.ToCString()
 
 
 def _open(path: Path) -> TDocStd_Document:
@@ -66,6 +82,58 @@ def _to_glb(
     writer = RWGltf_CafWriter(TCollection_AsciiString(str(destination)), True)
     writer.Perform(doc, TColStd_IndexedDataMapOfStringString(), Message_ProgressRange())
     return destination.read_bytes()
+
+
+#: How finely a drawn curve is sampled, as a share of the part's diagonal. Fine
+#: enough that glyph outlines read as letters, coarse enough to stay small.
+GRAPHIC_DEFLECTION = 0.0006
+
+
+def _polylines(shape: Any, deflection: float) -> tuple[tuple[Vec, ...], ...]:
+    """The edges of a presentation shape, sampled into polylines."""
+    lines: list[tuple[Vec, ...]] = []
+    explorer = TopExp_Explorer(shape, TopAbs_EDGE)
+    while explorer.More():
+        edge = TopoDS.Edge_s(explorer.Current())
+        explorer.Next()
+        try:
+            curve = BRepAdaptor_Curve(edge)
+            sampler = GCPnts_QuasiUniformDeflection(curve, deflection)
+            if not sampler.IsDone() or sampler.NbPoints() < 2:
+                continue
+            points = [sampler.Value(i) for i in range(1, sampler.NbPoints() + 1)]
+        except Exception:
+            continue
+        lines.append(tuple((p.X(), p.Y(), p.Z()) for p in points))
+    return tuple(lines)
+
+
+def _mesh(shape: Any) -> tuple[tuple[float, ...], tuple[int, ...]]:
+    """The filled parts of a presentation: glyphs of the text, and arrowheads.
+
+    These arrive already triangulated -- AP242 carries them as a triangulated
+    surface set -- so they are read out rather than meshed. Drawing only the
+    edges is why a viewer shows frames and leaders but no digits.
+    """
+    vertices: list[float] = []
+    indices: list[int] = []
+    explorer = TopExp_Explorer(shape, TopAbs_FACE)
+    while explorer.More():
+        face = TopoDS.Face_s(explorer.Current())
+        explorer.Next()
+        location = TopLoc_Location()
+        triangulation = BRep_Tool.Triangulation_s(face, location)
+        if triangulation is None:
+            continue
+        transform = location.Transformation()
+        base = len(vertices) // 3
+        for i in range(1, triangulation.NbNodes() + 1):
+            point = triangulation.Node(i).Transformed(transform)
+            vertices.extend((point.X(), point.Y(), point.Z()))
+        for i in range(1, triangulation.NbTriangles() + 1):
+            a, b, c = triangulation.Triangle(i).Get()
+            indices.extend((base + a - 1, base + b - 1, base + c - 1))
+    return tuple(vertices), tuple(indices)
 
 
 def _surface_centre(shape: Any) -> Vec | None:
@@ -116,7 +184,96 @@ def read_scene(path: Path | str, glb_path: Path | str) -> Scene:
     scene.annotations.extend(_dimensions(dimtol, anchor_for, diagonal))
     scene.annotations.extend(_tolerances(dimtol, anchor_for, read_magnitudes(path), diagonal))
     scene.annotations.extend(_datums(dimtol))
+    scene.views.extend(_views(doc, scene))
+    scene.graphics.extend(_graphics(dimtol, diagonal * GRAPHIC_DEFLECTION))
     return scene
+
+
+def _graphics(dimtol: Any, deflection: float) -> list[Graphic]:
+    """The drawn annotation geometry, for every annotation that carries any.
+
+    Read for all of them, not only the ones with no semantic value: a file's
+    author positioned and styled these, and they are what a CAD viewer shows.
+    """
+    from OCP.XCAFDoc import XCAFDoc_Datum as _Datum
+    from OCP.XCAFDoc import XCAFDoc_Dimension as _Dimension
+    from OCP.XCAFDoc import XCAFDoc_GeomTolerance as _Tolerance
+
+    out: list[Graphic] = []
+    for group, getter, attribute in (
+        ("dimension", "GetDimensionLabels", _Dimension),
+        ("tolerance", "GetGeomToleranceLabels", _Tolerance),
+        ("datum", "GetDatumLabels", _Datum),
+    ):
+        labels = TDF_LabelSequence()
+        getattr(dimtol, getter)(labels)
+        for i in range(1, labels.Length() + 1):
+            obj = attribute.Set_s(labels.Value(i)).GetObject()
+            shape = obj.GetPresentation()
+            if shape is None or shape.IsNull():
+                continue
+            lines = _polylines(shape, deflection)
+            vertices, indices = _mesh(shape)
+            if not lines and not indices:
+                continue
+            name = obj.GetPresentationName()
+            out.append(
+                Graphic(
+                    name=(name.ToCString() if name else "") or group,
+                    group=group,
+                    polylines=lines,
+                    vertices=vertices,
+                    indices=indices,
+                )
+            )
+    return out
+
+
+def _views(doc: TDocStd_Document, scene: Scene) -> list[SavedView]:
+    """The saved views, each naming the annotations it shows.
+
+    A view refers to GD&T labels, so annotations carry the label path they came
+    from and are matched back by it.
+    """
+    tool = XCAFDoc_DocumentTool.ViewTool_s(doc.Main())
+    labels = TDF_LabelSequence()
+    tool.GetViewLabels(labels)
+    if labels.Length() == 0:
+        return []
+
+    where = {
+        str(a.extra.get("entry")): i
+        for i, a in enumerate(scene.annotations)
+        if a.extra.get("entry")
+    }
+
+    out: list[SavedView] = []
+    for i in range(1, labels.Length() + 1):
+        label = labels.Value(i)
+        referenced = TDF_LabelSequence()
+        tool.GetRefGDTLabel(label, referenced)
+        shows = tuple(
+            sorted(
+                where[entry]
+                for k in range(1, referenced.Length() + 1)
+                if (entry := _entry(referenced.Value(k))) in where
+            )
+        )
+        if not shows:
+            continue
+        obj = XCAFDoc_View.Set_s(label).GetObject()
+        name = obj.Name()
+        direction = obj.ViewDirection()
+        up = obj.UpDirection()
+        out.append(
+            SavedView(
+                name=(name.ToCString() if name else f"View {i}") or f"View {i}",
+                shows=shows,
+                direction=(direction.X(), direction.Y(), direction.Z()),
+                up=(up.X(), up.Y(), up.Z()),
+            )
+        )
+    return out
 
 
 #: Dimension kinds carrying no measured value. Their content is drawn glyphs
@@ -158,6 +315,7 @@ def _dimensions(dimtol: Any, anchor_for: Any, diagonal: float) -> list[Annotatio
                 detail=(name.ToCString() if name else "") or kind,
                 tolerance=_tolerance_of(obj),
                 value=obj.GetValue(),
+                extra={"entry": _entry(label)},
             )
         )
     return out
@@ -210,6 +368,7 @@ def _tolerances(
                 group="tolerance",
                 detail=title,
                 value=value,
+                extra={"entry": _entry(label)},
             )
         )
     return out
@@ -250,6 +409,7 @@ def _datums(dimtol: Any) -> list[Annotation]:
                 origin=origin,
                 group="datum",
                 detail=f"Datum feature {letter}",
+                extra={"entry": _entry(labels.Value(i))},
             )
         )
     return out
