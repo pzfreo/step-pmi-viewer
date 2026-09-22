@@ -80,7 +80,11 @@
     border-radius: 4px; padding: 5px 7px; text-shadow: none; z-index: 20;
     box-shadow: 0 3px 12px rgba(0,0,0,.16);
   }
-  .pmi:hover .why { display: block; }
+  /* A touch screen cannot hover, so the explanation is opened by tapping the
+     label instead. Hovering still opens it wherever there is a pointer to hover
+     with, which leaves a mouse behaving as it did. */
+  @media (hover: hover) { .pmi:hover .why { display: block; } }
+  .pmi.asked .why { display: block; }
   .pmi.hidden { display: none; }
 
   /* Orientation cube and zoom, bottom right, clear of the panel. */
@@ -126,6 +130,39 @@
              font-size: 8.5px; line-height: 1.12; font-weight: 500; margin-left: 2px;
              vertical-align: middle; }
   .tolsym { font-weight: 500; font-size: 10.5px; margin-left: 2px; }
+
+  /* A phone has no room for a 216px panel pinned over the model: it covered
+     better than half the width and all of the height, and the part was left
+     peering out from behind it. Narrow enough, the panel slides off the right
+     edge and a key in the far corner brings it back, so the model has the
+     screen to itself until the panel is actually wanted. */
+  #grab { display: none; }
+  @media (max-width: 640px) {
+    #panel {
+      /* Held to the top half even when it has more to show: the point of a
+         family switch is watching the part change as it is thrown. */
+      left: 10px; width: auto; max-height: min(52%, calc(100% - 92px));
+      transition: transform .22s ease;
+    }
+    body:not(.panelled) #panel { transform: translateX(calc(100% + 12px)); }
+    #grab {
+      display: grid; place-items: center; position: fixed; right: 14px; bottom: 14px;
+      width: 46px; height: 46px; border-radius: 50%; z-index: 11;
+      border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+      font: 400 18px/1 ui-sans-serif, sans-serif; cursor: pointer; padding: 0;
+      box-shadow: 0 2px 10px rgba(0,0,0,.14);
+    }
+    #grab::before { content: "\2261"; }
+    body.panelled #grab::before { content: "\00d7"; font-size: 21px; }
+  }
+
+  /* A fingertip is not a mouse pointer: the zoom keys were 26 by 24, which is
+     half of what a touch target wants to be. */
+  @media (pointer: coarse) {
+    #zoom button { width: 42px; height: 40px; font-size: 17px; }
+    #zoom button.wide { width: 62px; font-size: 13px; }
+    label.row, button.row { padding: 7px 3px; }
+  }
 </style>
 <script type="importmap">
 { "imports": {
@@ -190,6 +227,7 @@
     <span><button id="all">all</button> <button id="none">none</button></span>
   </div>
 </aside>
+<button id="grab" aria-label="Show or hide the panel"></button>
 
 <script type="module">
 import * as THREE from 'three';
@@ -215,7 +253,13 @@ stage.appendChild(overlay.domElement);
 const d = DATA.bbox.diagonal;
 const c = DATA.bbox.min.map((v, i) => (v + DATA.bbox.max[i]) / 2);
 const camera = new THREE.PerspectiveCamera(36, 1, d / 500, d * 60);
-camera.position.set(c[0] + d * 0.8, c[1] - d * 1.0, c[2] + d * 0.62);
+// The opening view stands off by a fixed share of the diagonal, which suits a
+// window wider than it is tall. A phone held upright is not: 36 degrees across
+// the height is much less than that across the width, so the part arrived
+// cropped off both edges. Stand further off by however much narrower it is.
+const upright = Math.max(1, innerHeight / Math.max(innerWidth, 1));
+camera.position.set(c[0] + d * 0.8 * upright, c[1] - d * 1.0 * upright,
+                    c[2] + d * 0.62 * upright);
 camera.up.set(0, 0, 1);
 // On the stage, not the label overlay: the overlay is pointer-events:none, so it
 // never sees a pointerdown except one that started on a label, and dragging the
@@ -595,6 +639,26 @@ stage.addEventListener('pointerdown', event => {
                   { x: event.clientX, y: event.clientY };
 }, true);
 
+// --- reaching a label without a pointer to hover with ---------------------
+// The explanation hangs off :hover, which a touch screen has none of. A tap on
+// the label opens it, and a tap anywhere else closes it again. One at a time:
+// they are wide, and two open at once would be a pile of text over the part.
+const noHover = matchMedia('(hover: none)');
+addEventListener('click', event => {
+  // Only where there is nothing to hover with. A mouse already opens the
+  // explanation by hovering, and a click that pinned one open would be a
+  // behaviour it did not have before.
+  if (!noHover.matches) return;
+  const label = event.target.closest?.('.pmi');
+  for (const open of document.querySelectorAll('.pmi.asked')) {
+    if (open !== label) open.classList.remove('asked');
+  }
+  if (label && label.querySelector('.why')) label.classList.toggle('asked');
+});
+
+// --- the panel, where the screen is too narrow to keep it open ------------
+grab.addEventListener('click', () => document.body.classList.toggle('panelled'));
+
 addEventListener('pointerup', event => {
   const press = pressedOnCube;
   pressedOnCube = null;
@@ -616,8 +680,12 @@ function dolly(factor) {
 function fit() {
   const centre = centreOf();
   const size = new THREE.Vector3(...DATA.bbox.max).sub(new THREE.Vector3(...DATA.bbox.min));
+  // fov is the vertical angle. A portrait window is narrower across than it is
+  // tall, so the part has to be further off to fit the width -- without this a
+  // phone held upright cropped it off both edges.
   const reach = Math.max(size.x, size.y, size.z) /
-                (2 * Math.tan((camera.fov * Math.PI) / 360));
+                (2 * Math.tan((camera.fov * Math.PI) / 360)) /
+                Math.min(1, camera.aspect);
   const direction = camera.position.clone().sub(controls.target).normalize();
   camera.position.copy(centre).addScaledVector(direction, reach * 1.9);
   controls.target.copy(centre);
@@ -635,10 +703,15 @@ $('zoomFit').onclick = fit;
 // width, so the labels, which project through the same matrix, still line up.
 const PANEL_PX = 236;
 
+// Except on a narrow screen, where it slides off the model rather than sitting
+// beside it: it covers nothing when closed, so shifting the part away from it
+// only pushed the part off the left edge.
+const panelRoom = () => (innerWidth <= 640 ? 0 : Math.min(PANEL_PX, innerWidth * 0.35));
+
 function resize() {
   const w = innerWidth, h = innerHeight;
   camera.aspect = w / h;
-  camera.setViewOffset(w, h, Math.min(PANEL_PX, w * 0.35) / 2, 0, w, h);
+  camera.setViewOffset(w, h, panelRoom() / 2, 0, w, h);
   camera.updateProjectionMatrix();
   renderer.setSize(w, h); overlay.setSize(w, h);
   for (const m of leaderMaterials) m.resolution.set(w, h);

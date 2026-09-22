@@ -47,8 +47,29 @@
   }
   #drop.over { background: var(--panel); }
   #drop h1 { font-size: 15px; font-weight: 650; color: var(--ink); margin: 0; }
+  /* There is nothing to drag a file with on a touch screen, so the invitation
+     to drop one is an instruction that cannot be followed. */
+  #drop h1.narrow { display: none; }
+  @media (hover: none) {
+    #drop h1.wide { display: none; }
+    #drop h1.narrow { display: block; }
+  }
   #drop p { margin: 0; max-width: 34em; }
   iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
+
+  /* A phone cannot fit the name, the status, the progress bar and two buttons
+     on one row: the buttons ran off the right edge, and choosing a file was
+     out of reach. Name and buttons keep the first row; status and progress
+     take a second. */
+  @media (max-width: 640px) {
+    header { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; }
+    header b { grid-area: 1 / 1; }
+    label.file { grid-area: 1 / 2; justify-self: end; }
+    #save { grid-area: 1 / 3; }
+    #status { grid-area: 2 / 1 / auto / 3; }
+    #bar { grid-area: 2 / 3; width: 100%; }
+    #drop { padding: 18px; }
+  }
   body.showing #drop { display: none; }
   body.showing iframe { display: block; }
 </style>
@@ -63,7 +84,8 @@
 </header>
 <main>
   <div id="drop">
-    <h1>Drop a STEP file here</h1>
+    <h1 class="wide">Drop a STEP file here</h1>
+    <h1 class="narrow">Choose a STEP file</h1>
     <p>The file is read in this tab — the PMI is extracted by OpenCASCADE compiled to
        WebAssembly, and nothing is uploaded anywhere.</p>
   </div>
