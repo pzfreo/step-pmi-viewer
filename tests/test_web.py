@@ -89,6 +89,16 @@ def test_the_glue_recognises_a_file_with_no_pmi(page, no_pmi):
     assert Path(result["step"]).name == f"{Path(no_pmi.name).stem}-pmi.step"
 
 
+def test_recognition_is_on_its_way_before_it_is_asked_for(page):
+    """Waiting until a file turns out to have no PMI is the worst moment to
+    start: the reader is already waiting, and build123d and quiddity are a long
+    way down the wire."""
+    assert "fetchRecogniser().catch(() => { recogniser = null; });" in page
+    # Once, whoever asks first: a file arriving mid-download joins that install
+    # rather than starting a second one.
+    assert "const fetchRecogniser = () => (recogniser ||= installRecogniser());" in page
+
+
 def test_the_recogniser_wheel_matches_what_ci_builds(page):
     wheel = re.search(r'const RECOGNISER = "(.*?)"', page).group(1)
     workflow = (PAGE.parents[1] / ".github" / "workflows" / "pages.yml").read_text()
