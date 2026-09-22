@@ -200,7 +200,7 @@ def read_scene(path: Path | str, glb_path: Path | str) -> Scene:
 
     scene.annotations.extend(_dimensions(dimtol, anchor_for, diagonal))
     scene.annotations.extend(_tolerances(dimtol, anchor_for, read_magnitudes(path), diagonal))
-    scene.annotations.extend(_datums(dimtol))
+    scene.annotations.extend(_datums(dimtol, anchor_for))
     scene.views.extend(_views(doc, scene))
     scene.graphics.extend(_graphics(dimtol, diagonal * GRAPHIC_DEFLECTION))
     return scene
@@ -404,7 +404,14 @@ def _datum_letters(dimtol: Any, tolerance_label: Any) -> tuple[str, ...]:
     return tuple(letters)
 
 
-def _datums(dimtol: Any) -> list[Annotation]:
+def _datums(dimtol: Any, anchor_for: Any) -> list[Annotation]:
+    """Datum feature symbols, each pointing at the surface it identifies.
+
+    The attach point is where the letter sits, not what it names. Using it for
+    both ends gives a leader of no length, and an arrowhead with no direction to
+    face -- which is what the page drew before: a blob beside the symbol,
+    touching nothing.
+    """
     labels = TDF_LabelSequence()
     dimtol.GetDatumLabels(labels)
     out: list[Annotation] = []
@@ -422,7 +429,7 @@ def _datums(dimtol: Any) -> list[Annotation]:
             Annotation(
                 kind="datum",
                 cells=(letter,),
-                anchor=origin,
+                anchor=anchor_for(labels.Value(i)) or origin,
                 origin=origin,
                 group="datum",
                 detail=f"Datum feature {letter}",

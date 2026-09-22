@@ -102,3 +102,12 @@ def test_topods_is_reached_through_the_name_either_build_has():
     assert "TopoDS.Edge_s" not in source
     assert "TopoDS.Face_s" not in source
     assert "BRep_Tool.Triangulation_s" not in source
+
+
+def test_a_datum_points_at_the_face_it_names(scene):
+    """The attach point is where the letter sits, not what it names. Using it for
+    both ends gave a zero-length leader and an arrowhead with no direction, which
+    the page drew as a blob beside the symbol touching nothing."""
+    datums = [a for a in scene.annotations if a.kind == "datum"]
+    assert datums, "the fixture no longer carries datum feature symbols"
+    assert any(a.anchor != a.origin for a in datums)

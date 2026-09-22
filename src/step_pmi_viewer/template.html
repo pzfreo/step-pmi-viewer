@@ -322,19 +322,22 @@ for (const a of DATA.labels) {
   line.computeLineDistances();
   scene.add(line);
 
-  // An arrowhead where the leader lands, as a drawing puts one.
+  // An arrowhead where the leader lands, as a drawing puts one. A leader of no
+  // length has no direction to point along, so it gets no head and no line.
+  const stub = tip.distanceTo(near) < d * 1e-4;
   const dot = new THREE.Mesh(
     new THREE.ConeGeometry(d * 0.006, d * 0.022, 12),
     new THREE.MeshBasicMaterial({ color: tint }));
   const along = tip.clone().sub(near).normalize();
   dot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), along);
   dot.position.copy(tip).addScaledVector(along, -d * 0.011);
+  dot.visible = line.visible = !stub;
   scene.add(dot);
 
   if (!byGroup.has(a.group)) byGroup.set(a.group, { colour: GROUP_COLOUR[a.group] || '#555', items: [] });
   byGroup.get(a.group).items.push({ el, line, dot });
   placedLabels.push({
-    el, tag, line, dot, world: near, inner: el.firstElementChild,
+    el, tag, line, dot, stub, world: near, inner: el.firstElementChild,
     times: el.querySelector('.times'),
     // Identical text on the same kind of annotation is the same callout.
     repeat: `${a.group}\u0000${a.cells.join(' ')}\u0000` +
@@ -648,10 +651,12 @@ function declutter() {
 
     // A feature pointing away from the camera is on the far side of the part.
     // Its label would otherwise float over geometry it does not belong to,
-    // and on a part with many features that is most of the clutter.
-    const away = cull &&
+    // and on a part with many features that is most of the clutter. A label with
+    // no leader has no direction to be facing, so it is never culled that way.
+    const away = !L.stub && cull &&
       toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < 0.12;
-    L.line.visible = leaders && !away; L.dot.visible = leaders && !away;
+    L.line.visible = leaders && !away && !L.stub;
+    L.dot.visible = leaders && !away && !L.stub;
     if (away) { L.el.style.visibility = 'hidden'; continue; }
 
     proj.copy(L.world).project(camera);

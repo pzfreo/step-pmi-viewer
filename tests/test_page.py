@@ -95,7 +95,7 @@ def test_leaders_follow_the_label_text(scene):
     assert "function leadersWanted()" in html
     assert "const leaders = leadersWanted();" in html
     # Neither the far-side pass nor the repeat pass may switch them back on.
-    assert "L.line.visible = leaders && !away;" in html
+    assert "L.line.visible = leaders && !away && !L.stub;" in html
     assert "if (echo || !leaders)" in html
 
 
@@ -162,3 +162,12 @@ def test_drawn_pmi_has_one_control(scene):
     html = render(scene)
     assert "cbGraphic" not in html
     assert "graphicGroup.visible = drawnWanted();" in html
+
+
+def test_a_leader_with_no_length_draws_nothing(scene):
+    """It has no direction to point along, so the arrowhead would face anywhere."""
+    html = render(scene)
+    assert "const stub = tip.distanceTo(near) < d * 1e-4;" in html
+    assert "L.line.visible = leaders && !away && !L.stub;" in html
+    # Nor can such a label be judged to face away from the camera.
+    assert "const away = !L.stub && cull &&" in html
