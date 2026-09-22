@@ -57,17 +57,21 @@
   #drop p { margin: 0; max-width: 34em; }
   iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
 
-  /* A phone cannot fit the name, the status, the progress bar and two buttons
-     on one row: the buttons ran off the right edge, and choosing a file was
-     out of reach. Name and buttons keep the first row; status and progress
-     take a second. */
+  /* A phone cannot fit the name, the status, the progress bar and three buttons
+     on one row: they ran off the right edge, and choosing a file was out of
+     reach. Let the row wrap, and let the status and its progress fall past the
+     buttons to wherever there is room.
+
+     780, not 640, because that is where the fourth control stops fitting: below
+     it the row wraps cleanly, and just above it the same row was squeezed until
+     the buttons wrapped their own text, which made 660 taller than 800. */
+  @media (max-width: 780px) {
+    header { flex-wrap: wrap; gap: 6px 8px; }
+    header b { flex: 1 0 auto; }
+    #status { order: 8; flex: 1 1 auto; }
+    #bar { order: 9; flex: 0 0 auto; }
+  }
   @media (max-width: 640px) {
-    header { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; }
-    header b { grid-area: 1 / 1; }
-    label.file { grid-area: 1 / 2; justify-self: end; }
-    #save { grid-area: 1 / 3; }
-    #status { grid-area: 2 / 1 / auto / 3; }
-    #bar { grid-area: 2 / 3; width: 100%; }
     #drop { padding: 18px; }
   }
   body.showing #drop { display: none; }
@@ -81,6 +85,7 @@
   <div id="bar"><i id="fill"></i></div>
   <label class="file">choose a STEP file<input id="file" type="file" accept=".stp,.step,.STP,.STEP"></label>
   <button id="save" disabled>save page</button>
+  <button id="saveStep" hidden>save STEP</button>
 </header>
 <main>
   <div id="drop">
@@ -126,10 +131,24 @@ def recognise(name, data):
     source = work / name
     source.write_bytes(bytes(data))
     page = work / "page.html"
-    # The STEP file it writes on the way is a by-product here.
-    report = run(source, work / "pmi.step", viewer=page, quiet=True)
+    # The AP242 file is the point of recognising, not a by-product: it carries the
+    # features as PMI a CAD system can read, where the page only draws them.
+    step = work / f"{source.stem}-pmi.step"
+    report = run(source, step, viewer=page, quiet=True)
     return json.dumps({"html": page.read_text(), "name": source.stem,
-                       "counts": dict(report.counts)})
+                       "counts": dict(report.counts), "step": str(step)})
+
+
+def step_bytes(path):
+    """The written AP242 file, handed over when it is asked for.
+
+    As bytes, not text: Pyodide would widen a str to UTF-16 on the way across
+    and the Blob would copy that again, so a large part would peak at several
+    times its own size for no reason. The file itself is on MEMFS, which is the
+    heap, so waiting until the button is pressed saves no memory -- it only
+    keeps the conversion out of the way of a page nobody asked to save.
+    """
+    return pathlib.Path(path).read_bytes()
 `;
 
 // micropip resolves from metadata, so it cannot know these are never called.
@@ -191,14 +210,17 @@ const barEl = document.getElementById("bar");
 const fillEl = document.getElementById("fill");
 const fileEl = document.getElementById("file");
 const saveEl = document.getElementById("save");
+const stepEl = document.getElementById("saveStep");
 const dropEl = document.getElementById("drop");
 const viewEl = document.getElementById("view");
 
 let pyodideRef = null; // kept so recognition can be installed later
 let convert = null;   // the Python entry point, once everything is installed
 let recognise = null; // the same for feature recognition, installed on demand
+let stepBytes = null; // reads the AP242 file recognition wrote, on demand
 let pending = null;   // a file chosen while still loading
 let saved = null;     // {url, name} of the page now on screen
+let ap242 = null;     // {path, name} of the AP242 file, when features were recognised
 
 let stage = "";           // the last thing said, so a queued file can be added to it
 const say = (text, bad) => {
@@ -281,6 +303,7 @@ async function fetchRecogniser() {
   await pyodideRef.runPythonAsync(ALIASES);
   await pyodideRef.runPythonAsync(GLUE);
   recognise = pyodideRef.globals.get("recognise");
+  stepBytes = pyodideRef.globals.get("step_bytes");
 }
 
 /** Put a finished page on screen and report what is on it. */
@@ -293,6 +316,10 @@ function display(result, what) {
   viewEl.src = saved.url;
   document.body.classList.add("showing");
   saveEl.disabled = false;
+  // Only recognition writes one: a file that already carried PMI has its own
+  // AP242 on disk already, and offering to save it back would say nothing new.
+  ap242 = result.step ? { path: result.step, name: result.name + "-pmi.step" } : null;
+  stepEl.hidden = !ap242;
   const counts = Object.entries(result.counts).sort();
   const total = counts.reduce((n, [, c]) => n + c, 0);
   say(`${result.name}: ${total} ${what}` +
@@ -347,6 +374,16 @@ saveEl.addEventListener("click", () => {
   a.href = saved.url;
   a.download = saved.name;
   a.click();
+});
+stepEl.addEventListener("click", () => {
+  if (!ap242 || !stepBytes) return;
+  const blob = new Blob([stepBytes(ap242.path).toJs()], { type: "model/step" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = ap242.name;
+  a.click();
+  URL.revokeObjectURL(url);
 });
 for (const type of ["dragenter", "dragover"]) {
   document.addEventListener(type, e => { e.preventDefault(); dropEl.classList.add("over"); });
