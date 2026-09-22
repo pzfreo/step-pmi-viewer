@@ -117,6 +117,34 @@ def test_the_part_centres_in_the_clear_area(scene):
     assert "innerWidth <= 640 ? 0 : Math.min(PANEL_PX, innerWidth * 0.35)" in html
 
 
+def test_the_part_turns_past_the_poles(scene):
+    """OrbitControls keeps up up, which costs the part its roll: the polar angle
+    stops dead at top and bottom, so a drag meaning "keep turning it over" hits a
+    wall halfway round. Its pan and zoom are kept; only the rotation is ours."""
+    html = render(scene)
+    assert "controls.enableRotate = false;" in html
+    # The camera's own axes turn it, and its up is carried round with them --
+    # which is the whole difference from an orbit.
+    assert "tumbleAxis.setFromMatrixColumn(camera.matrix, 1)" in html
+    assert "tumbleAxis.setFromMatrixColumn(camera.matrix, 0)" in html
+    assert "camera.up.applyQuaternion(tumbleQ);" in html
+    # A pinch is OrbitControls' to deal with. The first finger is still the
+    # primary one, and left alone it would spin the part while the other two
+    # were only trying to zoom it.
+    assert "if (touching.size > 1) { tumbling = null; return; }" in html
+
+
+def test_the_cube_offers_its_edges_and_corners(scene):
+    """Six faces cannot express a three-quarter view, which is how a part is
+    usually read -- and is what the page itself opens at."""
+    html = render(scene)
+    assert "v => (Math.abs(v) > CUBE_EDGE_BAND ? Math.sign(v) : 0)" in html
+    # A corner arrives as [1, 1, 1], root-three long; taken as given it would
+    # stand the camera that much further off.
+    assert "const heading = new THREE.Vector3(...direction).normalize();" in html
+    assert 'id="zoomHome"' in html
+
+
 def test_orbit_listens_where_pointer_events_arrive(scene):
     """The label overlay is pointer-events:none, so controls bound to it never
     see a drag on the part."""
