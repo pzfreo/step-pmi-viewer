@@ -8,6 +8,12 @@ name: Pages
 on:
   push:
     branches: [main]
+  # quid2pmi's wheel is built from its own repository at deploy time, so a change
+  # there does not reach the page until this runs again. Nothing in this repo
+  # notices that -- the live wheel was four commits behind before anyone looked.
+  # A daily rebuild picks it up; run this workflow by hand to get it sooner.
+  schedule:
+    - cron: "17 5 * * *"
   workflow_dispatch:
 
 permissions:
