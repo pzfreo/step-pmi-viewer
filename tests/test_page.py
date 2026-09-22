@@ -181,3 +181,10 @@ def test_a_leader_follows_the_bends_it_is_given(scene):
     assert "geom.setPositions(path.flatMap(p => [p.x, p.y, p.z]));" in html
     # The arrowhead faces along the final leg, not along the whole leader.
     assert "tip.clone().sub(path[path.length - 2]).normalize()" in html
+
+
+def test_the_far_side_cull_keeps_what_is_edge_on(scene):
+    """At 0.12 it hid everything within a few degrees of edge-on, which on a
+    round part is most of what you are looking at."""
+    html = render(scene)
+    assert ".dot(L.out) < -0.25;" in html

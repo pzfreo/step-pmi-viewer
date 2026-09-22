@@ -656,8 +656,11 @@ function declutter() {
     // Its label would otherwise float over geometry it does not belong to,
     // and on a part with many features that is most of the clutter. A label with
     // no leader has no direction to be facing, so it is never culled that way.
+    // The threshold hides only what is genuinely turned away: at 0.12 it also
+    // took everything within a few degrees of edge-on, which on a round part is
+    // most of what you are looking at.
     const away = !L.stub && cull &&
-      toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < 0.12;
+      toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < -0.25;
     L.line.visible = leaders && !away && !L.stub;
     L.dot.visible = leaders && !away && !L.stub;
     if (away) { L.el.style.visibility = 'hidden'; continue; }
