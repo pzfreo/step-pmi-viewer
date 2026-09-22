@@ -169,8 +169,9 @@ def test_a_leader_with_no_length_draws_nothing(scene):
     html = render(scene)
     assert "const stub = tip.distanceTo(path[path.length - 2]) < d * 1e-4;" in html
     assert "L.line.visible = leaders && !away && !L.stub;" in html
-    # Nor can such a label be judged to face away from the camera.
-    assert "const away = !L.stub && cull &&" in html
+    # Nor can such a label be judged to face away from the camera -- though the
+    # part can still be in front of it, which is tested separately.
+    assert "(!L.stub &&" in html
 
 
 def test_a_leader_follows_the_bends_it_is_given(scene):
@@ -187,4 +188,16 @@ def test_the_far_side_cull_keeps_what_is_edge_on(scene):
     """At 0.12 it hid everything within a few degrees of edge-on, which on a
     round part is most of what you are looking at."""
     html = render(scene)
-    assert ".dot(L.out) < -0.25;" in html
+    assert ".dot(L.out) < -0.25));" in html
+
+
+def test_a_label_is_hidden_when_the_part_is_in_the_way(scene):
+    """Facing away from the camera is a proxy for being behind the part, and on
+    anything but a convex lump it is wrong both ways."""
+    html = render(scene)
+    assert "function testOcclusion()" in html
+    assert "L.buried = occluder.intersectObjects(meshes, false).length > 0;" in html
+    # Casting a ray per label is too slow every frame, so it waits for the view
+    # to settle -- and runs again when the part is hidden or made see-through.
+    assert "} else if (still >= 0 && ++still === 6) {" in html
+    assert "const solid = $('cbPart').checked && Number($('alpha').value) === 0;" in html

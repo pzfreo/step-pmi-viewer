@@ -346,6 +346,7 @@ for (const a of DATA.labels) {
     repeat: `${a.group}\u0000${a.cells.join(' ')}\u0000` +
             (a.tolerance ? JSON.stringify(a.tolerance) : ''),
     out: near.clone().sub(new THREE.Vector3(...a.anchor)).normalize(),
+    tip: tip.clone(),
   });
 }
 
@@ -469,6 +470,8 @@ function applyLook() {
   document.documentElement.dataset.theme = $('cbDark').checked ? 'dark' : 'light';
   const detail = document.querySelector('input[name=detail]:checked');
   document.body.dataset.detail = detail ? detail.value : 'full';
+  // Hiding the part or turning it see-through changes what is in the way.
+  still = 0;
 }
 
 // With no label to point at, a leader points at nothing -- and over drawn PMI it
@@ -659,8 +662,9 @@ function declutter() {
     // The threshold hides only what is genuinely turned away: at 0.12 it also
     // took everything within a few degrees of edge-on, which on a round part is
     // most of what you are looking at.
-    const away = !L.stub && cull &&
-      toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < -0.25;
+    const away = cull && (L.buried ||
+      (!L.stub &&
+       toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < -0.25));
     L.line.visible = leaders && !away && !L.stub;
     L.dot.visible = leaders && !away && !L.stub;
     if (away) { L.el.style.visibility = 'hidden'; continue; }
@@ -718,6 +722,32 @@ function declutter() {
   }
 }
 
+// --- occlusion -----------------------------------------------------------
+// Whether the part is actually in the way. The facing test is a proxy for that
+// and on anything but a convex lump it is often wrong both ways: it hides a
+// feature in plain sight down a bore, and shows one tucked behind a flange.
+// Casting a ray is exact, and too slow to do every frame on a dense mesh, so it
+// runs once the view settles -- which is when labels get read.
+const occluder = new THREE.Raycaster();
+let still = 0;
+const lastEye = new THREE.Vector3(Infinity, 0, 0);
+
+function testOcclusion() {
+  // Nothing occludes if the part is hidden or see-through, and a label buried
+  // by the part is exactly what someone turns transparency up to read.
+  const solid = $('cbPart').checked && Number($('alpha').value) === 0;
+  const bias = DATA.bbox.diagonal * 0.004;
+  for (const L of placedLabels) {
+    if (!solid || !meshes.length) { L.buried = false; continue; }
+    const toward = L.tip.clone().sub(camera.position);
+    const reach = toward.length();
+    occluder.set(camera.position, toward.normalize());
+    occluder.near = 0;
+    occluder.far = Math.max(reach - bias, 0);
+    L.buried = occluder.intersectObjects(meshes, false).length > 0;
+  }
+}
+
 let frame = 0;
 (function tick() {
   requestAnimationFrame(tick);
@@ -738,6 +768,15 @@ let frame = 0;
 
   overlay.render(scene, camera);
   if ((frame++ & 1) === 0) declutter();
+
+  // Settled means the camera has not moved for a few frames running.
+  if (lastEye.distanceToSquared(camera.position) > 1e-12) {
+    lastEye.copy(camera.position);
+    still = 0;
+  } else if (still >= 0 && ++still === 6) {
+    testOcclusion();
+    still = -1;
+  }
 })();
 </script>
 </body>
