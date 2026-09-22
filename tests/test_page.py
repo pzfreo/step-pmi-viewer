@@ -110,9 +110,11 @@ def test_the_cube_snaps_to_the_six_standard_views(scene):
 
 def test_the_part_centres_in_the_clear_area(scene):
     """The panel covers the right of the canvas, so centring on the window puts
-    the part off to one side."""
+    the part off to one side -- except on a narrow screen, where the panel slides
+    off the model instead of sitting beside it and covers nothing until asked for."""
     html = render(scene)
-    assert "camera.setViewOffset(w, h, Math.min(PANEL_PX, w * 0.35) / 2, 0, w, h)" in html
+    assert "camera.setViewOffset(w, h, panelRoom() / 2, 0, w, h)" in html
+    assert "innerWidth <= 640 ? 0 : Math.min(PANEL_PX, innerWidth * 0.35)" in html
 
 
 def test_orbit_listens_where_pointer_events_arrive(scene):
