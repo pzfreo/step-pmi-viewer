@@ -316,19 +316,22 @@ for (const a of DATA.labels) {
   });
   mat.resolution.set(innerWidth, innerHeight);
   leaderMaterials.push(mat);
+  // Through any bends the annotation asked for, so a leader can meet the surface
+  // square rather than arriving at the angle the label happens to sit at.
+  const path = [near, ...(a.via || []).map(v => new THREE.Vector3(...v)), tip];
   const geom = new LineGeometry();
-  geom.setPositions([near.x, near.y, near.z, tip.x, tip.y, tip.z]);
+  geom.setPositions(path.flatMap(p => [p.x, p.y, p.z]));
   const line = new Line2(geom, mat);
   line.computeLineDistances();
   scene.add(line);
 
   // An arrowhead where the leader lands, as a drawing puts one. A leader of no
   // length has no direction to point along, so it gets no head and no line.
-  const stub = tip.distanceTo(near) < d * 1e-4;
+  const stub = tip.distanceTo(path[path.length - 2]) < d * 1e-4;
   const dot = new THREE.Mesh(
     new THREE.ConeGeometry(d * 0.006, d * 0.022, 12),
     new THREE.MeshBasicMaterial({ color: tint }));
-  const along = tip.clone().sub(near).normalize();
+  const along = tip.clone().sub(path[path.length - 2]).normalize();
   dot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), along);
   dot.position.copy(tip).addScaledVector(along, -d * 0.011);
   dot.visible = line.visible = !stub;

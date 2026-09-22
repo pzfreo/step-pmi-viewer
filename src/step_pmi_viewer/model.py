@@ -38,6 +38,10 @@ class Annotation:
     anchor: Vec
     #: Where the text sits, a short way off the anchor.
     origin: Vec
+    #: Points the leader passes through on its way in. A recognised feature puts
+    #: one a short way along the surface normal, so the leader meets the part
+    #: square instead of arriving at whatever angle the label happens to sit at.
+    via: tuple[Vec, ...] = ()
     group: str = "dimension"
     detail: str = ""
     tolerance: Tolerance | None = None
@@ -54,6 +58,7 @@ class Annotation:
             "cells": list(self.cells),
             "anchor": list(self.anchor),
             "origin": list(self.origin),
+            "via": [list(v) for v in self.via],
             "group": self.group,
             "detail": self.detail,
             "tolerance": self.tolerance.to_dict() if self.tolerance else None,

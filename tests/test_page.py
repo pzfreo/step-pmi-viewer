@@ -167,7 +167,17 @@ def test_drawn_pmi_has_one_control(scene):
 def test_a_leader_with_no_length_draws_nothing(scene):
     """It has no direction to point along, so the arrowhead would face anywhere."""
     html = render(scene)
-    assert "const stub = tip.distanceTo(near) < d * 1e-4;" in html
+    assert "const stub = tip.distanceTo(path[path.length - 2]) < d * 1e-4;" in html
     assert "L.line.visible = leaders && !away && !L.stub;" in html
     # Nor can such a label be judged to face away from the camera.
     assert "const away = !L.stub && cull &&" in html
+
+
+def test_a_leader_follows_the_bends_it_is_given(scene):
+    """A recognised feature bends its leader so the last leg leaves the surface
+    along the normal; an authored one gives no bends and draws straight."""
+    html = render(scene)
+    assert "const path = [near, ...(a.via || []).map(v => new THREE.Vector3(...v)), tip];" in html
+    assert "geom.setPositions(path.flatMap(p => [p.x, p.y, p.z]));" in html
+    # The arrowhead faces along the final leg, not along the whole leader.
+    assert "tip.clone().sub(path[path.length - 2]).normalize()" in html
