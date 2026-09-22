@@ -145,6 +145,29 @@ def test_the_cube_offers_its_edges_and_corners(scene):
     assert 'id="zoomHome"' in html
 
 
+def test_the_cube_lights_up_under_the_pointer(scene):
+    """Six flat faces say nothing about the rim between them being pickable, so
+    the edges and corners were a secret worth keeping from nobody."""
+    html = render(scene)
+    assert "cube.add(highlight);" in html
+    # Shaped from the same direction a press there would return: a square in a
+    # face, a strip along an edge, a nub at a corner.
+    assert "const size = out ? (1.02 - CUBE_EDGE_BAND) * HALF : 2 * CUBE_EDGE_BAND * HALF;" in html
+    assert "markCube(tumbling ? null : faceAt(event.clientX, event.clientY));" in html
+
+
+def test_the_view_turns_to_a_snap_rather_than_cutting(scene):
+    """A cut loses the reader: with nothing moving in between there is no telling
+    which way the part turned, only that it is showing a different side."""
+    html = render(scene)
+    assert "advanceFlight();" in html
+    # Orientation goes across as a quaternion. Going home from upside down flips
+    # up end for end, and a vector interpolated through that passes through zero.
+    assert "camera.quaternion.slerpQuaternions(" in html
+    # And a hand on the part outranks a flight still in the middle of itself.
+    assert "flight = null;\n  tumbling = {" in html
+
+
 def test_orbit_listens_where_pointer_events_arrive(scene):
     """The label overlay is pointer-events:none, so controls bound to it never
     see a drag on the part."""
