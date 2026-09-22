@@ -145,6 +145,31 @@ def test_the_cube_offers_its_edges_and_corners(scene):
     assert 'id="zoomHome"' in html
 
 
+def test_the_part_is_framed_by_its_own_corners(scene):
+    """The old standoff was the largest side of the box times a fudge factor,
+    which is a guess at this and a loose one: it left the part at barely half the
+    window, and a third of the width of a phone held upright."""
+    html = render(scene)
+    assert "function standoff(heading, up)" in html
+    assert "halfAcross = Math.max(halfAcross, Math.abs(at.dot(across)));" in html
+    # The panel covers the right of the canvas, so the width to fit into is the
+    # strip it leaves clear, not the whole window.
+    assert "const clear = Math.max(innerWidth - panelRoom(), 1);" in html
+    # And the opening view is that same framing, once the window's shape is known.
+    assert "home(true);" in html
+
+
+def test_the_view_rolls_a_quarter_turn_at_a_time(scene):
+    """Square onto a face nothing else turns the part in the plane of the screen:
+    an orbit takes the long way round and a tumble cannot do it at all, since both
+    move where you stand rather than which way up you are standing."""
+    html = render(scene)
+    for button in ("rollLeft", "rollRight"):
+        assert f'id="{button}"' in html
+        assert f"$('{button}').onclick" in html
+    assert ".applyAxisAngle(heading, (quarters * Math.PI) / 2);" in html
+
+
 def test_the_cube_lights_up_under_the_pointer(scene):
     """Six flat faces say nothing about the rim between them being pickable, so
     the edges and corners were a secret worth keeping from nobody."""

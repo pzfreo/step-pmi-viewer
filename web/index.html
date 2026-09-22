@@ -287,10 +287,25 @@ async function boot() {
   busy(false);
   say("ready — choose a STEP file");
   if (pending) show(pending);
+  // Quietly, behind whatever happens next: nothing here touches the status, and
+  // a failure is only a failure if something later actually needs it, which
+  // asks again and reports it then.
+  fetchRecogniser().catch(() => { recogniser = null; });
 }
 
-/** Install the recognition stack. Only called when someone asks for it. */
-async function fetchRecogniser() {
+/** Install the recognition stack, once, whoever asks first.
+ *
+ * It used to wait until a file turned out to have no PMI, which is the worst
+ * moment to start: the reader is already waiting, and build123d and quiddity
+ * are a long way down the wire. It is started in the background as soon as the
+ * viewer itself is ready instead, so by the time a file needs it, it is usually
+ * already there. The promise is kept so that a file arriving mid-download joins
+ * this install rather than starting a second one.
+ */
+let recogniser = null;
+const fetchRecogniser = () => (recogniser ||= installRecogniser());
+
+async function installRecogniser() {
   const micropip = pyodideRef.pyimport("micropip");
   await pyodideRef.runPythonAsync(STANDINS);
   await micropip.install("build123d<0.12");

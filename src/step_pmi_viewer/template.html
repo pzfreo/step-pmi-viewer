@@ -92,13 +92,13 @@
      Sits above the cube, which the canvas draws in the same corner. */
   #nav { position: fixed; left: 14px; bottom: 106px; display: flex;
          flex-direction: column; align-items: center; gap: 6px; z-index: 9; }
-  #zoom { display: flex; gap: 4px; }
-  #zoom button {
+  #zoom, #roll { display: flex; gap: 4px; }
+  #zoom button, #roll button {
     width: 26px; height: 24px; border: 1px solid var(--line); border-radius: 4px;
     background: var(--panel); color: var(--ink); font: 600 13px/1 ui-sans-serif, sans-serif;
     cursor: pointer; padding: 0;
   }
-  #zoom button:hover { background: var(--line); }
+  #zoom button:hover, #roll button:hover { background: var(--line); }
   #zoom button.wide { width: 46px; font-size: 11px; font-weight: 500; }
 
   /* Label detail. Minimal keeps the value a drawing leads with and drops the
@@ -159,7 +159,7 @@
   /* A fingertip is not a mouse pointer: the zoom keys were 26 by 24, which is
      half of what a touch target wants to be. */
   @media (pointer: coarse) {
-    #zoom button { width: 42px; height: 40px; font-size: 17px; }
+    #zoom button, #roll button { width: 42px; height: 40px; font-size: 17px; }
     #zoom button.wide { width: 62px; font-size: 13px; }
     label.row, button.row { padding: 7px 3px; }
   }
@@ -174,6 +174,10 @@
 <body>
 <div id="stage"></div>
 <div id="nav">
+  <div id="roll">
+    <button id="rollLeft" title="Roll a quarter turn anticlockwise">↺</button>
+    <button id="rollRight" title="Roll a quarter turn clockwise">↻</button>
+  </div>
   <div id="zoom">
     <button id="zoomIn" title="Zoom in">+</button>
     <button id="zoomOut" title="Zoom out">−</button>
@@ -263,9 +267,9 @@ const camera = new THREE.PerspectiveCamera(36, 1, d / 500, d * 60);
 // much less than that across the width, so the part arrived cropped off both
 // edges. Stand further off by however much narrower the window is.
 const HOME = [0.8, -1.0, 0.62];
-const openingOffset = () => new THREE.Vector3(...HOME)
-  .multiplyScalar(d * Math.max(1, innerHeight / Math.max(innerWidth, 1)));
-camera.position.fromArray(c).add(openingOffset());
+// Roughly, for now: how far off it belongs depends on the shape of the window,
+// which is not known until resize has run, and home() settles it then.
+camera.position.fromArray(c).addScaledVector(new THREE.Vector3(...HOME), d);
 camera.up.set(0, 0, 1);
 // On the stage, not the label overlay: the overlay is pointer-events:none, so it
 // never sees a pointerdown except one that started on a label, and dragging the
@@ -668,7 +672,16 @@ function poseAt(position, up, target) {
   return pose.quaternion.clone();
 }
 
-function flyTo(position, up, target) {
+function flyTo(position, up, target, now) {
+  if (now) {
+    camera.up.copy(up);
+    camera.position.copy(position);
+    controls.target.copy(target);
+    camera.lookAt(target);
+    controls.update();
+    flight = null;
+    return;
+  }
   flight = {
     at: performance.now(),
     fromPosition: camera.position.clone(), toPosition: position.clone(),
@@ -706,6 +719,7 @@ function lookFrom(direction) {
   // Looking straight down Z, "up" cannot also be Z; use Y, as a plan view does.
   const up = new THREE.Vector3(...(Math.abs(heading.z) > 0.9 ? [0, 1, 0] : [0, 0, 1]));
   flyTo(centre.clone().addScaledVector(heading, away), up, centre);
+
 }
 
 // A press on the cube is only a snap if it stays put. Swallowing it outright
@@ -831,19 +845,46 @@ function dolly(factor) {
   controls.update();
 }
 
+// How far back the whole part is in view, looking along ``heading`` with
+// ``up`` overhead. The old answer was the largest side of the bounding box
+// times a fudge factor, which is a guess at this and a loose one: it stood so
+// far off that the part took barely half the window, and less than that again
+// on a phone, where standing off by the aspect ratio on top of the fudge put
+// the part at a third of the width.
+//
+// The corners of the box are what actually has to be in view. Measured along
+// the two axes of the screen they give the half-width and half-height the part
+// really needs from this angle, and the distance follows from the field of view.
+const FIT_AIR = 1.06;   // a little air around it, so nothing touches the edge
+
+function standoff(heading, up) {
+  const across = new THREE.Vector3().crossVectors(heading, up).normalize();
+  const over = new THREE.Vector3().crossVectors(across, heading).normalize();
+  const centre = centreOf();
+  const low = new THREE.Vector3(...DATA.bbox.min), high = new THREE.Vector3(...DATA.bbox.max);
+  let halfAcross = 0, halfOver = 0;
+  for (let corner = 0; corner < 8; corner++) {
+    const at = new THREE.Vector3(
+      corner & 1 ? high.x : low.x,
+      corner & 2 ? high.y : low.y,
+      corner & 4 ? high.z : low.z).sub(centre);
+    halfAcross = Math.max(halfAcross, Math.abs(at.dot(across)));
+    halfOver = Math.max(halfOver, Math.abs(at.dot(over)));
+  }
+  // The panel sits over the right of the canvas, and the frustum is already
+  // shifted to centre the part in what it leaves; the width to fit into is
+  // that clear strip, not the whole window.
+  const clear = Math.max(innerWidth - panelRoom(), 1);
+  const tanOver = Math.tan((camera.fov * Math.PI) / 360);
+  const tanAcross = tanOver * (clear / innerHeight);
+  return Math.max(halfOver / tanOver, halfAcross / tanAcross) * FIT_AIR;
+}
+
 function fit() {
   const centre = centreOf();
-  const size = new THREE.Vector3(...DATA.bbox.max).sub(new THREE.Vector3(...DATA.bbox.min));
-  // fov is the vertical angle. A portrait window is narrower across than it is
-  // tall, so the part has to be further off to fit the width -- without this a
-  // phone held upright cropped it off both edges.
-  const reach = Math.max(size.x, size.y, size.z) /
-                (2 * Math.tan((camera.fov * Math.PI) / 360)) /
-                Math.min(1, camera.aspect);
-  const direction = camera.position.clone().sub(controls.target).normalize();
-  camera.position.copy(centre).addScaledVector(direction, reach * 1.9);
-  controls.target.copy(centre);
-  controls.update();
+  const heading = camera.position.clone().sub(controls.target).normalize();
+  const over = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+  flyTo(centre.clone().addScaledVector(heading, standoff(heading, over)), over, centre);
 }
 
 $('zoomIn').onclick = () => dolly(1 / 1.25);
@@ -853,10 +894,29 @@ $('zoomFit').onclick = fit;
 // off than the opening view, so going home through it arrived correct but
 // small. A tumble has no landmarks in it, and by the faces of the cube alone
 // there was no way back to a three-quarter view at all.
-$('zoomHome').onclick = () => flyTo(
-  new THREE.Vector3().fromArray(c).add(openingOffset()),
-  new THREE.Vector3(0, 0, 1),
-  new THREE.Vector3().fromArray(c));
+// Home is the opening three-quarter view, framed to the window it is in: a
+// fixed standoff put the part at a third of the width of a phone held upright,
+// and the reader then had to zoom every time they came back to it.
+function home(now) {
+  const heading = new THREE.Vector3(...HOME).normalize();
+  const up = new THREE.Vector3(0, 0, 1);
+  const centre = centreOf();
+  flyTo(centre.clone().addScaledVector(heading, standoff(heading, up)), up, centre, now);
+}
+$('zoomHome').onclick = () => home(false);
+
+// A quarter turn about the line of sight. Square onto a face, nothing else
+// turns the part in the plane of the screen: an orbit takes the long way round
+// and a tumble cannot do it at all, since both move where you stand rather than
+// which way up you are standing.
+function roll(quarters) {
+  const heading = camera.position.clone().sub(controls.target).normalize();
+  const over = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1)
+    .applyAxisAngle(heading, (quarters * Math.PI) / 2);
+  flyTo(camera.position.clone(), over, controls.target.clone());
+}
+$('rollLeft').onclick = () => roll(-1);
+$('rollRight').onclick = () => roll(1);
 
 // --- loop ---------------------------------------------------------------
 // The panel covers the right of the canvas, so the centre of the window is not
@@ -879,6 +939,8 @@ function resize() {
   for (const m of leaderMaterials) m.resolution.set(w, h);
 }
 addEventListener('resize', resize); resize();
+// Now that the window's shape is known, stand where the part fills it.
+home(true);
 // Labels sit beside their feature, so on a crowded part they collide on screen.
 // Push each one vertically off whatever is already placed, nearest the camera
 // first, so the label in front keeps its position and the one behind moves.
