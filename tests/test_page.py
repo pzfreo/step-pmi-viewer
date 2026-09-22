@@ -205,6 +205,14 @@ def test_a_label_is_hidden_when_the_part_is_in_the_way(scene):
     assert "const solid = $('cbPart').checked && Number($('alpha').value) === 0;" in html
 
 
+def test_the_part_opens_see_through_with_its_edges(scene):
+    """A recognised part is mostly interior -- pockets, bores and channels are
+    the features, and an opaque solid shows none of them."""
+    html = render(scene)
+    assert '<input type="range" id="alpha" min="0" max="90" value="85">' in html
+    assert '<input type="checkbox" id="cbEdges" checked>' in html
+
+
 def test_the_occlusion_state_is_declared_before_it_is_used(scene):
     """applyLook resets it and runs during setup. Declared further down, it is
     in its temporal dead zone then, and reading it throws before the render loop

@@ -57,18 +57,21 @@
   #drop p { margin: 0; max-width: 34em; }
   iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
 
-  /* A phone cannot fit the name, the status, the progress bar and two buttons
-     on one row: the buttons ran off the right edge, and choosing a file was
-     out of reach. Name and buttons keep the first row; status and progress
-     take a second. */
-  @media (max-width: 640px) {
+  /* A phone cannot fit the name, the status, the progress bar and three buttons
+     on one row: they ran off the right edge, and choosing a file was out of
+     reach. Let the row wrap, and let the status and its progress fall past the
+     buttons to wherever there is room.
+
+     780, not 640, because that is where the fourth control stops fitting: below
+     it the row wraps cleanly, and just above it the same row was squeezed until
+     the buttons wrapped their own text, which made 660 taller than 800. */
+  @media (max-width: 780px) {
     header { flex-wrap: wrap; gap: 6px 8px; }
     header b { flex: 1 0 auto; }
-    /* Whatever the buttons need, the status and its progress take a line of
-       their own underneath: there is no fitting four controls and a sentence
-       across a phone. */
     #status { order: 8; flex: 1 1 auto; }
     #bar { order: 9; flex: 0 0 auto; }
+  }
+  @media (max-width: 640px) {
     #drop { padding: 18px; }
   }
   body.showing #drop { display: none; }
@@ -136,13 +139,16 @@ def recognise(name, data):
                        "counts": dict(report.counts), "step": str(step)})
 
 
-def step_text(path):
-    """The written AP242 file, read out only when it is asked for.
+def step_bytes(path):
+    """The written AP242 file, handed over when it is asked for.
 
-    It is the largest thing here by far, so it stays on the Emscripten
-    filesystem until someone actually wants to save it.
+    As bytes, not text: Pyodide would widen a str to UTF-16 on the way across
+    and the Blob would copy that again, so a large part would peak at several
+    times its own size for no reason. The file itself is on MEMFS, which is the
+    heap, so waiting until the button is pressed saves no memory -- it only
+    keeps the conversion out of the way of a page nobody asked to save.
     """
-    return pathlib.Path(path).read_text()
+    return pathlib.Path(path).read_bytes()
 `;
 
 // micropip resolves from metadata, so it cannot know these are never called.
@@ -211,7 +217,7 @@ const viewEl = document.getElementById("view");
 let pyodideRef = null; // kept so recognition can be installed later
 let convert = null;   // the Python entry point, once everything is installed
 let recognise = null; // the same for feature recognition, installed on demand
-let stepText = null;  // reads the AP242 file recognition wrote, on demand
+let stepBytes = null; // reads the AP242 file recognition wrote, on demand
 let pending = null;   // a file chosen while still loading
 let saved = null;     // {url, name} of the page now on screen
 let ap242 = null;     // {path, name} of the AP242 file, when features were recognised
@@ -297,7 +303,7 @@ async function fetchRecogniser() {
   await pyodideRef.runPythonAsync(ALIASES);
   await pyodideRef.runPythonAsync(GLUE);
   recognise = pyodideRef.globals.get("recognise");
-  stepText = pyodideRef.globals.get("step_text");
+  stepBytes = pyodideRef.globals.get("step_bytes");
 }
 
 /** Put a finished page on screen and report what is on it. */
@@ -370,8 +376,8 @@ saveEl.addEventListener("click", () => {
   a.click();
 });
 stepEl.addEventListener("click", () => {
-  if (!ap242 || !stepText) return;
-  const blob = new Blob([stepText(ap242.path)], { type: "model/step" });
+  if (!ap242 || !stepBytes) return;
+  const blob = new Blob([stepBytes(ap242.path).toJs()], { type: "model/step" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

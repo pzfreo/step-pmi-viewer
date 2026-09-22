@@ -82,6 +82,11 @@ def test_the_glue_recognises_a_file_with_no_pmi(page, no_pmi):
     result = json.loads(scope["recognise"](no_pmi.name, no_pmi.read_bytes()))
     assert sum(result["counts"].values()) > 0
     assert '"origin": "recognised features"' in result["html"]
+    # The AP242 file is what another CAD system can read, so recognition keeps it
+    # and says where: the page only draws the features.
+    written = scope["step_bytes"](result["step"])
+    assert written.startswith(b"ISO-10303-21;")
+    assert Path(result["step"]).name == f"{Path(no_pmi.name).stem}-pmi.step"
 
 
 def test_the_recogniser_wheel_matches_what_ci_builds(page):
