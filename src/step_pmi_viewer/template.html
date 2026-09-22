@@ -967,9 +967,17 @@ function declutter() {
     // The threshold hides only what is genuinely turned away: at 0.12 it also
     // took everything within a few degrees of edge-on, which on a round part is
     // most of what you are looking at.
-    const away = cull && (L.buried ||
-      (!L.stub &&
-       toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < -0.25));
+    // Settled on once per move, not once per frame. Asked every frame, it is
+    // asked all the way through a turn as well, and a label whose feature
+    // passes the threshold on the way winks out and back before the view has
+    // arrived -- a flicker, with a hand nowhere near anything. Which side of
+    // the part a feature is on is a question about where the turn ends.
+    if (flight === null) {
+      L.away = cull && (L.buried ||
+        (!L.stub &&
+         toCam.subVectors(camera.position, L.world).normalize().dot(L.out) < -0.25));
+    }
+    const away = L.away;
     L.line.visible = leaders && !away && !L.stub;
     L.dot.visible = leaders && !away && !L.stub;
     if (away) { L.el.style.visibility = 'hidden'; continue; }

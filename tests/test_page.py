@@ -170,6 +170,15 @@ def test_the_view_rolls_a_quarter_turn_at_a_time(scene):
     assert ".applyAxisAngle(heading, (quarters * Math.PI) / 2);" in html
 
 
+def test_which_side_a_feature_is_on_is_settled_once_per_move(scene):
+    """Asked every frame, it is asked all the way through a turn as well, and a
+    label whose feature passes the threshold on the way winks out and back before
+    the view has arrived -- a flicker, with a hand nowhere near anything."""
+    html = render(scene)
+    assert "if (flight === null) {" in html
+    assert "const away = L.away;" in html
+
+
 def test_the_cube_lights_up_under_the_pointer(scene):
     """Six flat faces say nothing about the rim between them being pickable, so
     the edges and corners were a secret worth keeping from nobody."""
