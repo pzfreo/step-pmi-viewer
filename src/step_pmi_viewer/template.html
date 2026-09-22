@@ -408,6 +408,8 @@ for (const a of DATA.labels) {
   byGroup.get(a.group).items.push({ el, line, dot });
   placedLabels.push({
     el, tag, line, dot, stub, world: near, inner: el.firstElementChild,
+    // Where it came in the file, as a tie-break that cannot wobble.
+    at: placedLabels.length,
     times: el.querySelector('.times'),
     // Identical text on the same kind of annotation is the same callout.
     repeat: `${a.group}\u0000${a.cells.join(' ')}\u0000` +
@@ -991,7 +993,20 @@ function declutter() {
       bw: L.inner.offsetWidth || 90, bh: (L.inner.offsetHeight || 15) + 3,
     });
   }
-  rows.sort((a, b) => a.depth - b.depth);
+  // Nearest the camera first -- but only to a depth that means something.
+  //
+  // OrbitControls.update() takes the camera's position out to spherical
+  // coordinates and back every frame, and that round trip is not the identity
+  // in floating point: left alone, with a hand nowhere near it, the camera
+  // random-walks by an ulp a frame. Two identical features either side of a
+  // part seen square-on sit at the same depth to well within that, so ordering
+  // them by raw depth let the walk decide, frame by frame, which of them spoke
+  // for the pair -- and the count jumped between them, which is what the
+  // flicker was. Comparing at a depth that could actually be told apart, and
+  // settling the rest by where they came in the file, holds them still.
+  const RESOLVED = 1e6;
+  rows.sort((a, b) =>
+    Math.round(a.depth * RESOLVED) - Math.round(b.depth * RESOLVED) || a.L.at - b.L.at);
 
   // One callout per distinct text, spoken by whichever instance is nearest the
   // camera; the rest keep their leader and arrowhead but say nothing. That is
