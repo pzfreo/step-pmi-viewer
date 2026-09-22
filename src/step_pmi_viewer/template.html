@@ -178,6 +178,7 @@
     <button id="zoomIn" title="Zoom in">+</button>
     <button id="zoomOut" title="Zoom out">−</button>
     <button id="zoomFit" class="wide" title="Fit the part">fit</button>
+    <button id="zoomHome" title="The opening view">⌂</button>
   </div>
 </div>
 <aside id="panel">
@@ -253,19 +254,29 @@ stage.appendChild(overlay.domElement);
 const d = DATA.bbox.diagonal;
 const c = DATA.bbox.min.map((v, i) => (v + DATA.bbox.max[i]) / 2);
 const camera = new THREE.PerspectiveCamera(36, 1, d / 500, d * 60);
-// The opening view stands off by a fixed share of the diagonal, which suits a
-// window wider than it is tall. A phone held upright is not: 36 degrees across
-// the height is much less than that across the width, so the part arrived
-// cropped off both edges. Stand further off by however much narrower it is.
-const upright = Math.max(1, innerHeight / Math.max(innerWidth, 1));
-camera.position.set(c[0] + d * 0.8 * upright, c[1] - d * 1.0 * upright,
-                    c[2] + d * 0.62 * upright);
+// The three-quarter view the page opens at. No face of the cube is this, and
+// hunting for it by hand after a tumble is a chore, so the home key puts the
+// camera back exactly here -- which is why it is a function and not a literal.
+//
+// It stands off by a fixed share of the diagonal, which suits a window wider
+// than it is tall. A phone held upright is not: 36 degrees across the height is
+// much less than that across the width, so the part arrived cropped off both
+// edges. Stand further off by however much narrower the window is.
+const HOME = [0.8, -1.0, 0.62];
+const openingOffset = () => new THREE.Vector3(...HOME)
+  .multiplyScalar(d * Math.max(1, innerHeight / Math.max(innerWidth, 1)));
+camera.position.fromArray(c).add(openingOffset());
 camera.up.set(0, 0, 1);
 // On the stage, not the label overlay: the overlay is pointer-events:none, so it
 // never sees a pointerdown except one that started on a label, and dragging the
 // part or the cube did nothing at all.
 const controls = new OrbitControls(camera, stage);
 controls.target.set(...c); controls.enableDamping = true; controls.dampingFactor = 0.09;
+// OrbitControls keeps "up" up, which costs the part its roll: the polar angle
+// stops dead at the top and the bottom, so a drag that means "keep turning it
+// over" hits a wall halfway round. Its pan and its zoom are worth keeping, so
+// only the rotation is taken over, below.
+controls.enableRotate = false;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8a9099, 2.5));
 const key = new THREE.DirectionalLight(0xffffff, 1.7); key.position.set(1, -1.3, 1.5);
@@ -602,8 +613,9 @@ const CUBE_FACES = [
   ['BACK', [0, 1, 0]], ['FRONT', [0, -1, 0]],
   ['TOP', [0, 0, 1]], ['BOTTOM', [0, 0, -1]],
 ];
+const CUBE_SIDE = 1.7;
 const cube = new THREE.Mesh(
-  new THREE.BoxGeometry(1.7, 1.7, 1.7),
+  new THREE.BoxGeometry(CUBE_SIDE, CUBE_SIDE, CUBE_SIDE),
   CUBE_FACES.map(([name]) => new THREE.MeshBasicMaterial({ map: faceTexture(name) })));
 cubeScene.add(cube);
 
@@ -613,9 +625,13 @@ const centreOf = () => new THREE.Vector3(...DATA.bbox.min)
 function lookFrom(direction) {
   const centre = centreOf();
   const away = camera.position.distanceTo(controls.target) || DATA.bbox.diagonal;
+  // A corner of the cube arrives as [1, 1, 1], which is root-three long: taken
+  // as given it would stand the camera that much further off, so the length is
+  // dropped and only the heading kept.
+  const heading = new THREE.Vector3(...direction).normalize();
   // Looking straight down Z, "up" cannot also be Z; use Y, as a plan view does.
-  camera.up.set(...(Math.abs(direction[2]) > 0.9 ? [0, 1, 0] : [0, 0, 1]));
-  camera.position.copy(centre).addScaledVector(new THREE.Vector3(...direction), away);
+  camera.up.set(...(Math.abs(heading.z) > 0.9 ? [0, 1, 0] : [0, 0, 1]));
+  camera.position.copy(centre).addScaledVector(heading, away);
   controls.target.copy(centre);
   controls.update();
 }
@@ -625,19 +641,76 @@ function lookFrom(direction) {
 const cubeRay = new THREE.Raycaster();
 let pressedOnCube = null;
 
+// Where on the cube a press landed, as a direction to stand in. Not just the
+// six faces: a real view cube gives its edges and its corners too, and those
+// are the views a part is usually read from -- the page's own opening view is a
+// corner one, and by face alone there was no way back to anything like it.
+// Which is which comes from where in the face the press landed, as a fraction
+// of the way out to the rim: the middle is the face, a band is the edge it
+// runs along, and the corners are where two bands cross.
+const CUBE_EDGE_BAND = 0.62;
+
 function faceAt(x, y) {
   const left = CUBE_EDGE, top = innerHeight - CUBE_EDGE - CUBE_PX;
   if (x < left || x > left + CUBE_PX || y < top || y > top + CUBE_PX) return null;
   cubeRay.setFromCamera(new THREE.Vector2(
     ((x - left) / CUBE_PX) * 2 - 1, -((y - top) / CUBE_PX) * 2 + 1), cubeCamera);
   const hit = cubeRay.intersectObject(cube, false)[0];
-  return hit ? CUBE_FACES[hit.face.materialIndex][1] : null;
+  if (!hit) return null;
+  const local = cube.worldToLocal(hit.point.clone()).multiplyScalar(2 / CUBE_SIDE);
+  const direction = [local.x, local.y, local.z].map(
+    v => (Math.abs(v) > CUBE_EDGE_BAND ? Math.sign(v) : 0));
+  // A press dead in the middle of a face rounds to nothing on every axis; the
+  // face it struck is the answer there.
+  return direction.some(Boolean) ? direction : CUBE_FACES[hit.face.materialIndex][1];
 }
 
 stage.addEventListener('pointerdown', event => {
   pressedOnCube = faceAt(event.clientX, event.clientY) &&
                   { x: event.clientX, y: event.clientY };
 }, true);
+
+// --- tumbling ------------------------------------------------------------
+// Turning the part with no fixed up, so a drag can carry it over the top and
+// keep going rather than stopping at the pole. The camera's own axes do the
+// turning -- its right for the vertical drag, its up for the horizontal -- and
+// its up is carried round with it, which is the whole difference from an orbit.
+const TURN = 2 * Math.PI;   // a full turn across the shorter side of the window
+const tumbleQ = new THREE.Quaternion(), tumbleAxis = new THREE.Vector3();
+const touching = new Set();
+let tumbling = null;
+
+stage.addEventListener('pointerdown', event => {
+  touching.add(event.pointerId);
+  // A second finger means a pinch, which is OrbitControls' to deal with: the
+  // first finger is still the primary one, and left to itself it would spin the
+  // part while the other two were only trying to zoom it.
+  if (touching.size > 1) { tumbling = null; return; }
+  if (!event.isPrimary || event.button !== 0) return;
+  tumbling = { x: event.clientX, y: event.clientY, id: event.pointerId };
+});
+
+addEventListener('pointermove', event => {
+  if (!tumbling || event.pointerId !== tumbling.id) return;
+  const span = Math.min(innerWidth, innerHeight);
+  const dx = ((event.clientX - tumbling.x) / span) * TURN;
+  const dy = ((event.clientY - tumbling.y) / span) * TURN;
+  tumbling.x = event.clientX;
+  tumbling.y = event.clientY;
+  tumbleQ.setFromAxisAngle(tumbleAxis.setFromMatrixColumn(camera.matrix, 1), -dx);
+  tumbleQ.multiply(new THREE.Quaternion().setFromAxisAngle(
+    tumbleAxis.setFromMatrixColumn(camera.matrix, 0), -dy));
+  const offset = camera.position.clone().sub(controls.target).applyQuaternion(tumbleQ);
+  camera.position.copy(controls.target).add(offset);
+  camera.up.applyQuaternion(tumbleQ);
+  camera.lookAt(controls.target);
+});
+
+for (const end of ['pointerup', 'pointercancel'])
+  addEventListener(end, event => {
+    touching.delete(event.pointerId);
+    if (tumbling && event.pointerId === tumbling.id) tumbling = null;
+  });
 
 // --- reaching a label without a pointer to hover with ---------------------
 // The explanation hangs off :hover, which a touch screen has none of. A tap on
@@ -695,6 +768,16 @@ function fit() {
 $('zoomIn').onclick = () => dolly(1 / 1.25);
 $('zoomOut').onclick = () => dolly(1.25);
 $('zoomFit').onclick = fit;
+// Standing back where the page opened, framing and all: fit() stands further
+// off than the opening view, so going home through it arrived correct but
+// small. A tumble has no landmarks in it, and by the faces of the cube alone
+// there was no way back to a three-quarter view at all.
+$('zoomHome').onclick = () => {
+  camera.up.set(0, 0, 1);
+  camera.position.fromArray(c).add(openingOffset());
+  controls.target.fromArray(c);
+  controls.update();
+};
 
 // --- loop ---------------------------------------------------------------
 // The panel covers the right of the canvas, so the centre of the window is not
