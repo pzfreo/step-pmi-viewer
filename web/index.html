@@ -46,17 +46,10 @@
     padding: 24px; color: var(--muted);
   }
   #drop.over { background: var(--panel); }
-  #none {
-    position: absolute; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 10px; text-align: center;
-    padding: 24px; color: var(--muted);
-  }
-  #none[hidden] { display: none; }
-  #drop h1, #none h1 { font-size: 15px; font-weight: 650; color: var(--ink); margin: 0; }
-  #drop p, #none p { margin: 0; max-width: 34em; }
-  #none .cost { font-size: 12px; }
+  #drop h1 { font-size: 15px; font-weight: 650; color: var(--ink); margin: 0; }
+  #drop p { margin: 0; max-width: 34em; }
   iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
-  body.showing #drop, body.asking #drop { display: none; }
+  body.showing #drop { display: none; }
   body.showing iframe { display: block; }
 </style>
 </head>
@@ -73,15 +66,6 @@
     <h1>Drop a STEP file here</h1>
     <p>The file is read in this tab — the PMI is extracted by OpenCASCADE compiled to
        WebAssembly, and nothing is uploaded anywhere.</p>
-  </div>
-  <div id="none" hidden>
-    <h1>No PMI in this file</h1>
-    <p>Nothing was annotated on this model — an AP203 export carries none at all.
-       The features its geometry implies can be recognised instead: holes, pockets,
-       chamfers, blends. They are inferred, not specified by whoever drew the part,
-       and the page will say so.</p>
-    <p class="cost">Recognition needs another ~45 MB of WebAssembly packages, fetched once.</p>
-    <button id="recognise">Recognise features</button>
   </div>
   <iframe id="view" title="the part and its PMI"></iframe>
 </main>
@@ -143,14 +127,11 @@ const fillEl = document.getElementById("fill");
 const fileEl = document.getElementById("file");
 const saveEl = document.getElementById("save");
 const dropEl = document.getElementById("drop");
-const noneEl = document.getElementById("none");
-const recogniseEl = document.getElementById("recognise");
 const viewEl = document.getElementById("view");
 
 let pyodideRef = null; // kept so recognition can be installed later
 let convert = null;   // the Python entry point, once everything is installed
 let recognise = null; // the same for feature recognition, installed on demand
-let unannotated = null; // {file, bytes} the user may want recognised
 let pending = null;   // a file chosen while still loading
 let saved = null;     // {url, name} of the page now on screen
 
@@ -244,9 +225,7 @@ function display(result, what) {
     name: result.name + ".html",
   };
   viewEl.src = saved.url;
-  document.body.classList.remove("asking");
   document.body.classList.add("showing");
-  noneEl.hidden = true;
   saveEl.disabled = false;
   const counts = Object.entries(result.counts).sort();
   const total = counts.reduce((n, [, c]) => n + c, 0);
@@ -269,37 +248,31 @@ async function show(file) {
     say(String(err.message || err).trim().split("\n").pop(), true);
     return;
   }
-  busy(false);
-  // Nothing was annotated on this model. An empty page says nothing; offer the
-  // features its geometry implies instead, and let the reader decide.
+  // Nothing was annotated on this model. An empty page says nothing, so show the
+  // features its geometry implies instead. The page itself says they were
+  // recognised rather than authored, which is the part that matters.
   if (!Object.keys(result.counts).length) {
-    unannotated = { name: file.name, bytes };
-    document.body.classList.remove("showing");
-    document.body.classList.add("asking");
-    noneEl.hidden = false;
-    saveEl.disabled = true;
-    say(`${result.name}: no PMI`);
-    return;
+    try {
+      if (!recognise) {
+        say(`${result.name}: no PMI — fetching feature recognition…`);
+        await painted();
+        await fetchRecogniser();
+      }
+      say(`${result.name}: no PMI — recognising features…`);
+      await painted();
+      result = JSON.parse(recognise(file.name, bytes));
+      busy(false);
+      display(result, "recognised features");
+      return;
+    } catch (err) {
+      busy(false);
+      say(String(err.message || err).trim().split("\n").pop(), true);
+      return;
+    }
   }
+  busy(false);
   display(result, "annotations");
 }
-
-recogniseEl.addEventListener("click", async () => {
-  if (!unannotated) return;
-  recogniseEl.disabled = true;
-  busy(true);
-  try {
-    if (!recognise) { say("installing feature recognition…"); await painted(); await fetchRecogniser(); }
-    say(`recognising features in ${unannotated.name}…`);
-    await painted();
-    display(JSON.parse(recognise(unannotated.name, unannotated.bytes)), "recognised features");
-  } catch (err) {
-    say(String(err.message || err).trim().split("\n").pop(), true);
-  } finally {
-    busy(false);
-    recogniseEl.disabled = false;
-  }
-});
 
 fileEl.addEventListener("change", () => { if (fileEl.files[0]) show(fileEl.files[0]); });
 saveEl.addEventListener("click", () => {
