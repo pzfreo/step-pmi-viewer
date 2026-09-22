@@ -201,3 +201,13 @@ def test_a_label_is_hidden_when_the_part_is_in_the_way(scene):
     # to settle -- and runs again when the part is hidden or made see-through.
     assert "} else if (still >= 0 && ++still === 6) {" in html
     assert "const solid = $('cbPart').checked && Number($('alpha').value) === 0;" in html
+
+
+def test_the_occlusion_state_is_declared_before_it_is_used(scene):
+    """applyLook resets it and runs during setup. Declared further down, it is
+    in its temporal dead zone then, and reading it throws before the render loop
+    starts: a blank page with a working panel beside it, which no other test
+    here would notice."""
+    html = render(scene)
+    for name in ("const occluder", "let still", "const lastEye"):
+        assert html.index(name) < html.index("function applyLook"), name

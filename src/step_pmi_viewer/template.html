@@ -274,6 +274,14 @@ const axes = new THREE.AxesHelper(d * 0.18); axes.visible = false; scene.add(axe
 // --- PMI ----------------------------------------------------------------
 const byGroup = new Map();
 const placedLabels = [];
+
+// Occlusion state, declared here because applyLook resets it and runs during
+// setup: a `let` further down the file is in its temporal dead zone then, and
+// reading it throws before the render loop is ever reached -- a blank page with
+// a working panel beside it.
+const occluder = new THREE.Raycaster();
+let still = 0;
+const lastEye = new THREE.Vector3(Infinity, 0, 0);
 const leaderMaterials = [];
 //: Leader width in pixels. Thin enough not to obscure the part, thick enough to
 //: follow across a busy view.
@@ -728,10 +736,6 @@ function declutter() {
 // feature in plain sight down a bore, and shows one tucked behind a flange.
 // Casting a ray is exact, and too slow to do every frame on a dense mesh, so it
 // runs once the view settles -- which is when labels get read.
-const occluder = new THREE.Raycaster();
-let still = 0;
-const lastEye = new THREE.Vector3(Infinity, 0, 0);
-
 function testOcclusion() {
   // Nothing occludes if the part is hidden or see-through, and a label buried
   // by the part is exactly what someone turns transparency up to read.
