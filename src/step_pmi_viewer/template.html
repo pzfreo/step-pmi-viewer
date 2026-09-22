@@ -619,8 +619,82 @@ const cube = new THREE.Mesh(
   CUBE_FACES.map(([name]) => new THREE.MeshBasicMaterial({ map: faceTexture(name) })));
 cubeScene.add(cube);
 
+// A cube that does not light up under the pointer keeps its edges and corners a
+// secret: nothing about six flat faces says the rim between them can be asked
+// for too. The patch is a child of the cube, so it turns with it, and it is
+// shaped from the same direction the press would return -- a square in the
+// middle of a face, a strip along an edge, a nub at a corner.
+const HALF = CUBE_SIDE / 2;
+const highlight = new THREE.Mesh(
+  new THREE.BoxGeometry(1, 1, 1),
+  new THREE.MeshBasicMaterial({
+    color: 0x2f6fb5, transparent: true, opacity: 0.3, depthWrite: false,
+  }));
+highlight.visible = false;
+cube.add(highlight);
+
+function markCube(direction) {
+  highlight.visible = Boolean(direction);
+  if (!direction) return;
+  for (let axis = 0; axis < 3; axis++) {
+    const out = direction[axis];
+    // Out to a hair beyond the surface, or the face's own texture wins the
+    // depth test and the patch flickers through it.
+    const size = out ? (1.02 - CUBE_EDGE_BAND) * HALF : 2 * CUBE_EDGE_BAND * HALF;
+    highlight.scale.setComponent(axis, size);
+    highlight.position.setComponent(
+      axis, out ? out * ((1.02 + CUBE_EDGE_BAND) / 2) * HALF : 0);
+  }
+}
+
 const centreOf = () => new THREE.Vector3(...DATA.bbox.min)
   .add(new THREE.Vector3(...DATA.bbox.max)).multiplyScalar(0.5);
+
+// Snapping used to cut straight to the new view, and a cut loses the reader:
+// with nothing moving in between there is no telling which way the part turned,
+// only that it is suddenly showing a different side. It turns there instead.
+//
+// The orientation is carried as a quaternion rather than as an up vector: going
+// home from upside down flips up end for end, and a vector interpolated through
+// that passes through nothing at all.
+const FLIGHT_MS = 340;
+const pose = new THREE.Object3D();
+let flight = null;
+
+function poseAt(position, up, target) {
+  pose.up.copy(up);
+  pose.position.copy(position);
+  pose.lookAt(target);
+  return pose.quaternion.clone();
+}
+
+function flyTo(position, up, target) {
+  flight = {
+    at: performance.now(),
+    fromPosition: camera.position.clone(), toPosition: position.clone(),
+    fromTarget: controls.target.clone(), toTarget: target.clone(),
+    fromQuaternion: camera.quaternion.clone(),
+    toQuaternion: poseAt(position, up, target),
+    up: up.clone(),
+  };
+}
+
+function advanceFlight() {
+  if (!flight) return;
+  const part = Math.min(1, (performance.now() - flight.at) / FLIGHT_MS);
+  // Eased both ends, so it leaves and arrives without a jolt.
+  const eased = part < 0.5 ? 2 * part * part : 1 - 2 * (1 - part) * (1 - part);
+  controls.target.lerpVectors(flight.fromTarget, flight.toTarget, eased);
+  camera.position.lerpVectors(flight.fromPosition, flight.toPosition, eased);
+  camera.quaternion.slerpQuaternions(flight.fromQuaternion, flight.toQuaternion, eased);
+  if (part < 1) return;
+  // Landed: leave the camera stated the ordinary way, or the next orbit reads
+  // an up vector that no longer agrees with where it is pointing.
+  camera.up.copy(flight.up);
+  camera.position.copy(flight.toPosition);
+  camera.lookAt(controls.target);
+  flight = null;
+}
 
 function lookFrom(direction) {
   const centre = centreOf();
@@ -630,10 +704,8 @@ function lookFrom(direction) {
   // dropped and only the heading kept.
   const heading = new THREE.Vector3(...direction).normalize();
   // Looking straight down Z, "up" cannot also be Z; use Y, as a plan view does.
-  camera.up.set(...(Math.abs(heading.z) > 0.9 ? [0, 1, 0] : [0, 0, 1]));
-  camera.position.copy(centre).addScaledVector(heading, away);
-  controls.target.copy(centre);
-  controls.update();
+  const up = new THREE.Vector3(...(Math.abs(heading.z) > 0.9 ? [0, 1, 0] : [0, 0, 1]));
+  flyTo(centre.clone().addScaledVector(heading, away), up, centre);
 }
 
 // A press on the cube is only a snap if it stays put. Swallowing it outright
@@ -687,8 +759,17 @@ stage.addEventListener('pointerdown', event => {
   // part while the other two were only trying to zoom it.
   if (touching.size > 1) { tumbling = null; return; }
   if (!event.isPrimary || event.button !== 0) return;
+  // A hand on the part outranks a flight it is still in the middle of.
+  flight = null;
   tumbling = { x: event.clientX, y: event.clientY, id: event.pointerId };
 });
+
+// The cube lights up wherever the pointer is over it, and goes dark while the
+// part is being turned by hand -- there is nothing to press at that moment.
+stage.addEventListener('pointermove', event => {
+  markCube(tumbling ? null : faceAt(event.clientX, event.clientY));
+});
+stage.addEventListener('pointerleave', () => markCube(null));
 
 addEventListener('pointermove', event => {
   if (!tumbling || event.pointerId !== tumbling.id) return;
@@ -772,12 +853,10 @@ $('zoomFit').onclick = fit;
 // off than the opening view, so going home through it arrived correct but
 // small. A tumble has no landmarks in it, and by the faces of the cube alone
 // there was no way back to a three-quarter view at all.
-$('zoomHome').onclick = () => {
-  camera.up.set(0, 0, 1);
-  camera.position.fromArray(c).add(openingOffset());
-  controls.target.fromArray(c);
-  controls.update();
-};
+$('zoomHome').onclick = () => flyTo(
+  new THREE.Vector3().fromArray(c).add(openingOffset()),
+  new THREE.Vector3(0, 0, 1),
+  new THREE.Vector3().fromArray(c));
 
 // --- loop ---------------------------------------------------------------
 // The panel covers the right of the canvas, so the centre of the window is not
@@ -911,6 +990,7 @@ function testOcclusion() {
 let frame = 0;
 (function tick() {
   requestAnimationFrame(tick);
+  advanceFlight();
   controls.update();
   renderer.render(scene, camera);
 
