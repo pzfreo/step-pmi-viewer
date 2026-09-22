@@ -99,3 +99,30 @@ def test_the_unbuildable_packages_are_stood_in_for(page):
         assert f'add_mock_package("{name}"' in standins
     # build123d 0.12 wants an OCP 8 that OCP.wasm does not build.
     assert 'micropip.install("build123d<0.12")' in page
+
+
+def test_the_standins_survive_importing_build123d(page):
+    """A bare `class Lib3MF: pass` did not: build123d reads Lib3MF.ModelUnit.*
+    while building a units table at import time, and the page died with
+    "type object 'Lib3MF' has no attribute 'ModelUnit'".
+
+    The same import runs here as in the browser, so a stand-in that is too thin
+    fails the suite rather than the page. Run out of process, since importing
+    build123d with a faked lib3mf would poison this one.
+    """
+    import subprocess
+    import sys
+
+    standins = re.search(r"const STANDINS = `(.*?)`;", page, re.S).group(1)
+    lib3mf = re.search(r'"lib3mf": """(.*?)"""', standins, re.S).group(1)
+    script = (
+        "import sys, types\n"
+        "m = types.ModuleType('lib3mf')\n"
+        f"exec({lib3mf!r}, m.__dict__)\n"
+        "sys.modules['lib3mf'] = m\n"
+        "sys.modules['psutil'] = types.ModuleType('psutil')\n"
+        "import build123d, quiddity\n"
+        "print('ok')\n"
+    )
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr.strip().splitlines()[-1:]

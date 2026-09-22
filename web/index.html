@@ -117,8 +117,19 @@ def recognise(name, data):
 const STANDINS = `
 import micropip
 micropip.add_mock_package("cadquery-ocp-novtk", "7.9.3", modules={})
-micropip.add_mock_package("lib3mf", "2.5.0", modules={"lib3mf": "class Lib3MF: pass"})
 micropip.add_mock_package("psutil", "7.1.0")
+# Any attribute of this stand-in is the stand-in again, to any depth: build123d
+# reads Lib3MF.ModelUnit.MilliMeter and a dozen more like it while building a
+# units table at import time, so an empty class is not enough.
+micropip.add_mock_package("lib3mf", "2.5.0", modules={"lib3mf": """
+class _Anything(type):
+    def __getattr__(cls, name):
+        return cls
+
+
+class Lib3MF(metaclass=_Anything):
+    pass
+"""})
 `;
 
 const statusEl = document.getElementById("status");
