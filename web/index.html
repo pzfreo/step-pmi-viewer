@@ -46,10 +46,17 @@
     padding: 24px; color: var(--muted);
   }
   #drop.over { background: var(--panel); }
-  #drop h1 { font-size: 15px; font-weight: 650; color: var(--ink); margin: 0; }
-  #drop p { margin: 0; max-width: 34em; }
+  #none {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; text-align: center;
+    padding: 24px; color: var(--muted);
+  }
+  #none[hidden] { display: none; }
+  #drop h1, #none h1 { font-size: 15px; font-weight: 650; color: var(--ink); margin: 0; }
+  #drop p, #none p { margin: 0; max-width: 34em; }
+  #none .cost { font-size: 12px; }
   iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
-  body.showing #drop { display: none; }
+  body.showing #drop, body.asking #drop { display: none; }
   body.showing iframe { display: block; }
 </style>
 </head>
@@ -67,6 +74,15 @@
     <p>The file is read in this tab — the PMI is extracted by OpenCASCADE compiled to
        WebAssembly, and nothing is uploaded anywhere.</p>
   </div>
+  <div id="none" hidden>
+    <h1>No PMI in this file</h1>
+    <p>Nothing was annotated on this model — an AP203 export carries none at all.
+       The features its geometry implies can be recognised instead: holes, pockets,
+       chamfers, blends. They are inferred, not specified by whoever drew the part,
+       and the page will say so.</p>
+    <p class="cost">Recognition needs another ~45 MB of WebAssembly packages, fetched once.</p>
+    <button id="recognise">Recognise features</button>
+  </div>
   <iframe id="view" title="the part and its PMI"></iframe>
 </main>
 
@@ -78,6 +94,10 @@ const OCP = { name: "cadquery-ocp-novtk-OCP.wasm", version: "7.9.3.1.post2026091
 // Built with `uv build --wheel --out-dir web`. Installed without its dependencies:
 // build123d is only ever a way to get OCP, and here OCP is already installed.
 const PACKAGE = "./step_pmi_viewer-0.1.0-py3-none-any.whl";
+// Feature recognition, for a file with no PMI of its own. Installed on demand:
+// build123d drags in scipy, scikit-learn and sympy, which nobody should pay for
+// unless they ask. Built beside this page by the same workflow.
+const RECOGNISER = "./quid2pmi-0.1.0-py3-none-any.whl";
 // The wheel keeps its name across releases, so a browser that has seen one will
 // happily reuse it and a fix never reaches the page. Fetch it here, where the
 // cache can be bypassed, and install it off the Emscripten filesystem.
@@ -92,6 +112,29 @@ def convert(name, data):
     source.write_bytes(bytes(data))
     scene = read_scene(source, work / "part.glb")
     return json.dumps({"html": render(scene), "name": scene.name, "counts": scene.counts()})
+
+def recognise(name, data):
+    from quid2pmi import convert as run
+
+    work = pathlib.Path(tempfile.mkdtemp())
+    source = work / name
+    source.write_bytes(bytes(data))
+    page = work / "page.html"
+    # The STEP file it writes on the way is a by-product here.
+    report = run(source, work / "pmi.step", viewer=page, quiet=True)
+    return json.dumps({"html": page.read_text(), "name": source.stem,
+                       "counts": dict(report.counts)})
+`;
+
+// micropip resolves from metadata, so it cannot know these are never called.
+// lib3mf (3MF export) and psutil have no wasm wheel at all; OCP is already here
+// under the name OCP.wasm publishes it as. build123d is pinned below 0.12,
+// which wants an OCP 8 that OCP.wasm does not build.
+const STANDINS = `
+import micropip
+micropip.add_mock_package("cadquery-ocp-novtk", "7.9.3", modules={})
+micropip.add_mock_package("lib3mf", "2.5.0", modules={"lib3mf": "class Lib3MF: pass"})
+micropip.add_mock_package("psutil", "7.1.0")
 `;
 
 const statusEl = document.getElementById("status");
@@ -100,9 +143,14 @@ const fillEl = document.getElementById("fill");
 const fileEl = document.getElementById("file");
 const saveEl = document.getElementById("save");
 const dropEl = document.getElementById("drop");
+const noneEl = document.getElementById("none");
+const recogniseEl = document.getElementById("recognise");
 const viewEl = document.getElementById("view");
 
+let pyodideRef = null; // kept so recognition can be installed later
 let convert = null;   // the Python entry point, once everything is installed
+let recognise = null; // the same for feature recognition, installed on demand
+let unannotated = null; // {file, bytes} the user may want recognised
 let pending = null;   // a file chosen while still loading
 let saved = null;     // {url, name} of the page now on screen
 
@@ -151,7 +199,7 @@ async function fetchKernel() {
 
 async function boot() {
   say("loading Python and the CAD kernel…");
-  const pyodide = await loadPyodide();
+  const pyodide = pyodideRef = await loadPyodide();
   runtime = 1;
   advance();
   await pyodide.loadPackage("micropip");
@@ -173,15 +221,48 @@ async function boot() {
   if (pending) show(pending);
 }
 
+/** Install the recognition stack. Only called when someone asks for it. */
+async function fetchRecogniser() {
+  const micropip = pyodideRef.pyimport("micropip");
+  await pyodideRef.runPythonAsync(STANDINS);
+  await micropip.install("build123d<0.12");
+  await micropip.install("quiddity");
+  const own = RECOGNISER.split("/").pop();
+  pyodideRef.FS.writeFile("/" + own,
+    new Uint8Array(await (await fetch(RECOGNISER, { cache: "reload" })).arrayBuffer()));
+  await micropip.install.callKwargs("emfs:/" + own, { deps: false });
+  await micropip.install("rich");
+  await pyodideRef.runPythonAsync(GLUE);
+  recognise = pyodideRef.globals.get("recognise");
+}
+
+/** Put a finished page on screen and report what is on it. */
+function display(result, what) {
+  if (saved) URL.revokeObjectURL(saved.url);
+  saved = {
+    url: URL.createObjectURL(new Blob([result.html], { type: "text/html" })),
+    name: result.name + ".html",
+  };
+  viewEl.src = saved.url;
+  document.body.classList.remove("asking");
+  document.body.classList.add("showing");
+  noneEl.hidden = true;
+  saveEl.disabled = false;
+  const counts = Object.entries(result.counts).sort();
+  const total = counts.reduce((n, [, c]) => n + c, 0);
+  say(`${result.name}: ${total} ${what}` +
+      (counts.length ? ` (${counts.map(([g, c]) => `${c} ${g}`).join(", ")})` : ""));
+}
+
 async function show(file) {
   if (!convert) { pending = file; say(stage); return; }
   pending = null;
   say(`reading ${file.name}…`);
   busy(true);
   await painted();
-  let result;
+  let result, bytes;
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    bytes = new Uint8Array(await file.arrayBuffer());
     result = JSON.parse(convert(file.name, bytes));
   } catch (err) {
     busy(false);
@@ -189,19 +270,36 @@ async function show(file) {
     return;
   }
   busy(false);
-  if (saved) URL.revokeObjectURL(saved.url);
-  saved = {
-    url: URL.createObjectURL(new Blob([result.html], { type: "text/html" })),
-    name: result.name + ".html",
-  };
-  viewEl.src = saved.url;
-  document.body.classList.add("showing");
-  saveEl.disabled = false;
-  const counts = Object.entries(result.counts).sort();
-  const total = counts.reduce((n, [, c]) => n + c, 0);
-  say(`${result.name}: ${total} annotations` +
-      (counts.length ? ` (${counts.map(([g, c]) => `${c} ${g}`).join(", ")})` : ""));
+  // Nothing was annotated on this model. An empty page says nothing; offer the
+  // features its geometry implies instead, and let the reader decide.
+  if (!Object.keys(result.counts).length) {
+    unannotated = { name: file.name, bytes };
+    document.body.classList.remove("showing");
+    document.body.classList.add("asking");
+    noneEl.hidden = false;
+    saveEl.disabled = true;
+    say(`${result.name}: no PMI`);
+    return;
+  }
+  display(result, "annotations");
 }
+
+recogniseEl.addEventListener("click", async () => {
+  if (!unannotated) return;
+  recogniseEl.disabled = true;
+  busy(true);
+  try {
+    if (!recognise) { say("installing feature recognition…"); await painted(); await fetchRecogniser(); }
+    say(`recognising features in ${unannotated.name}…`);
+    await painted();
+    display(JSON.parse(recognise(unannotated.name, unannotated.bytes)), "recognised features");
+  } catch (err) {
+    say(String(err.message || err).trim().split("\n").pop(), true);
+  } finally {
+    busy(false);
+    recogniseEl.disabled = false;
+  }
+});
 
 fileEl.addEventListener("change", () => { if (fileEl.files[0]) show(fileEl.files[0]); });
 saveEl.addEventListener("click", () => {
