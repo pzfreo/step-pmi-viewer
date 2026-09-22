@@ -170,6 +170,19 @@ def test_the_view_rolls_a_quarter_turn_at_a_time(scene):
     assert ".applyAxisAngle(heading, (quarters * Math.PI) / 2);" in html
 
 
+def test_the_nearest_of_two_equals_does_not_change_its_mind(scene):
+    """OrbitControls.update() takes the camera out to spherical coordinates and
+    back every frame, and that round trip is not the identity in floating point:
+    left alone the camera random-walks by an ulp a frame. Two identical features
+    either side of a part seen square-on sit at the same depth to well within
+    that, so raw depth let the walk decide which of them spoke for the pair."""
+    html = render(scene)
+    ordering = "Math.round(a.depth * RESOLVED) - Math.round(b.depth * RESOLVED) || a.L.at - b.L.at"
+    assert ordering in html
+    # The tie-break is where the label came in the file, which cannot wobble.
+    assert "at: placedLabels.length," in html
+
+
 def test_which_side_a_feature_is_on_is_settled_once_per_move(scene):
     """Asked every frame, it is asked all the way through a turn as well, and a
     label whose feature passes the threshold on the way winks out and back before
