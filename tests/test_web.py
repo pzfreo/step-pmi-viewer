@@ -126,3 +126,35 @@ def test_the_standins_survive_importing_build123d(page):
     )
     done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr.strip().splitlines()[-1:]
+
+
+def test_the_alias_list_covers_every_namespace_the_stack_uses(page):
+    """OCP.wasm binds some OCCT namespaces as modules of plain functions, so the
+    _s spelling every caller uses is missing. The shim aliases them back, and it
+    is only as good as its list -- which is checked here against the sources."""
+    import build123d
+    import quiddity
+
+    import step_pmi_viewer
+
+    aliases = re.search(r"const ALIASES = `(.*?)`;", page, re.S).group(1)
+    listed = set(" ".join(re.findall(r'"([A-Za-z0-9_ ]+)"', aliases)).split())
+
+    called: set[str] = set()
+    roots = [Path(m.__file__).parent for m in (quiddity, build123d, step_pmi_viewer)]
+    roots.append(PAGE.parents[1] / "src")
+    try:
+        import quid2pmi
+
+        roots.append(Path(quid2pmi.__file__).parent)
+    except ImportError:
+        pass
+    for root in roots:
+        for source in root.rglob("*.py"):
+            for hit in re.findall(
+                r"\b([A-Z][A-Za-z0-9_]*)\.[A-Za-z_][A-Za-z0-9_]*_s\b", source.read_text()
+            ):
+                called.add(hit)
+
+    assert len(called) > 20, "the scan found almost nothing, so it proves nothing"
+    assert called <= listed, sorted(called - listed)

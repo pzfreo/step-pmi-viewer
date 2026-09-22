@@ -114,6 +114,38 @@ def recognise(name, data):
 // lib3mf (3MF export) and psutil have no wasm wheel at all; OCP is already here
 // under the name OCP.wasm publishes it as. build123d is pinned below 0.12,
 // which wants an OCP 8 that OCP.wasm does not build.
+// OCP.wasm binds some OCCT namespaces as modules of plain functions where
+// desktop OCP binds them as classes of statics named with an _s suffix, and
+// quiddity, build123d and this package all call the _s spelling. Alias the
+// names back on: setattr works on a module and is refused on a pybind11 class,
+// so this only touches the bindings that differ.
+const ALIASES = `
+import importlib
+
+NAMESPACES = (
+    "BinTools BRep_Tool BRepAlgo BRepBndLib BRepFill BRepGProp BRepLib BRepLProp "
+    "BRepTools Font_FontMgr GCPnts_AbscissaPoint GeomAPI GeomConvert GeomProjLib "
+    "IGESControl_Controller Interface_Static Message Precision Quantity_Color RWStl "
+    "ShapeAnalysis_Curve ShapeAnalysis_FreeBounds ShapeCustom STEPCAFControl_Controller "
+    "STEPControl_Controller TDataStd_Name TDF_Tool TopExp TopoDS XCAFApp_Application "
+    "XCAFDoc_ColorTool XCAFDoc_Datum XCAFDoc_Dimension XCAFDoc_DocumentTool "
+    "XCAFDoc_GeomTolerance XCAFDoc_ShapeTool XCAFDoc_View"
+).split()
+
+for qualified in NAMESPACES:
+    try:
+        namespace = getattr(importlib.import_module("OCP." + qualified.split("_")[0]), qualified)
+    except (ImportError, AttributeError):
+        continue
+    for attr in dir(namespace):
+        if attr.startswith("_") or attr.endswith("_s") or hasattr(namespace, attr + "_s"):
+            continue
+        try:
+            setattr(namespace, attr + "_s", getattr(namespace, attr))
+        except (AttributeError, TypeError):
+            pass
+`;
+
 const STANDINS = `
 import micropip
 micropip.add_mock_package("cadquery-ocp-novtk", "7.9.3", modules={})
@@ -224,6 +256,7 @@ async function fetchRecogniser() {
     new Uint8Array(await (await fetch(RECOGNISER, { cache: "reload" })).arrayBuffer()));
   await micropip.install.callKwargs("emfs:/" + own, { deps: false });
   await micropip.install("rich");
+  await pyodideRef.runPythonAsync(ALIASES);
   await pyodideRef.runPythonAsync(GLUE);
   recognise = pyodideRef.globals.get("recognise");
 }
