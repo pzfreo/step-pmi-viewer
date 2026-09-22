@@ -32,8 +32,8 @@
   /* The title and the all/none footer stay put; everything between them scrolls,
      so a part with many families is still reachable on a short window. */
   #panel .body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-  #panel h1 { position: relative; margin: 0; padding: 9px 11px 7px; font-size: 12px;
-              font-weight: 650; border-bottom: 1px solid var(--line); }
+  #panel h1 { margin: 0; padding: 9px 11px 7px; font-size: 12px; font-weight: 650;
+              border-bottom: 1px solid var(--line); }
   #panel h1 small { display: block; font-weight: 400; color: var(--muted); font-size: 10.5px; }
   .grp { padding: 7px 9px; border-bottom: 1px solid var(--line); }
   .grp > b { display: block; font-size: 10px; text-transform: uppercase;
@@ -133,17 +133,27 @@
 
   /* A phone has no room for a 216px panel pinned over the model: it covered
      better than half the width and all of the height, and the part was left
-     peering out from behind it. Narrow enough, and the panel becomes a title
-     bar that taps open over the top third, so the model stays in view while
-     a family is switched on. */
+     peering out from behind it. Narrow enough, the panel slides off the right
+     edge and a key in the far corner brings it back, so the model has the
+     screen to itself until the panel is actually wanted. */
+  #grab { display: none; }
   @media (max-width: 640px) {
-    #panel { left: 10px; width: auto; max-height: min(60%, calc(100% - 20px)); }
-    #panel h1 { padding-right: 28px; cursor: pointer; user-select: none; }
-    #panel h1::after {
-      content: "\25be"; position: absolute; right: 11px; top: 8px; color: var(--muted);
+    #panel {
+      /* Held to the top half even when it has more to show: the point of a
+         family switch is watching the part change as it is thrown. */
+      left: 10px; width: auto; max-height: min(52%, calc(100% - 92px));
+      transition: transform .22s ease;
     }
-    body.panelled #panel h1::after { content: "\25b4"; }
-    body:not(.panelled) #panel .body, body:not(.panelled) #panel #foot { display: none; }
+    body:not(.panelled) #panel { transform: translateX(calc(100% + 12px)); }
+    #grab {
+      display: grid; place-items: center; position: fixed; right: 14px; bottom: 14px;
+      width: 46px; height: 46px; border-radius: 50%; z-index: 11;
+      border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+      font: 400 18px/1 ui-sans-serif, sans-serif; cursor: pointer; padding: 0;
+      box-shadow: 0 2px 10px rgba(0,0,0,.14);
+    }
+    #grab::before { content: "\2261"; }
+    body.panelled #grab::before { content: "\00d7"; font-size: 21px; }
   }
 
   /* A fingertip is not a mouse pointer: the zoom keys were 26 by 24, which is
@@ -217,6 +227,7 @@
     <span><button id="all">all</button> <button id="none">none</button></span>
   </div>
 </aside>
+<button id="grab" aria-label="Show or hide the panel"></button>
 
 <script type="module">
 import * as THREE from 'three';
@@ -242,7 +253,13 @@ stage.appendChild(overlay.domElement);
 const d = DATA.bbox.diagonal;
 const c = DATA.bbox.min.map((v, i) => (v + DATA.bbox.max[i]) / 2);
 const camera = new THREE.PerspectiveCamera(36, 1, d / 500, d * 60);
-camera.position.set(c[0] + d * 0.8, c[1] - d * 1.0, c[2] + d * 0.62);
+// The opening view stands off by a fixed share of the diagonal, which suits a
+// window wider than it is tall. A phone held upright is not: 36 degrees across
+// the height is much less than that across the width, so the part arrived
+// cropped off both edges. Stand further off by however much narrower it is.
+const upright = Math.max(1, innerHeight / Math.max(innerWidth, 1));
+camera.position.set(c[0] + d * 0.8 * upright, c[1] - d * 1.0 * upright,
+                    c[2] + d * 0.62 * upright);
 camera.up.set(0, 0, 1);
 // On the stage, not the label overlay: the overlay is pointer-events:none, so it
 // never sees a pointerdown except one that started on a label, and dragging the
@@ -640,8 +657,7 @@ addEventListener('click', event => {
 });
 
 // --- the panel, where the screen is too narrow to keep it open ------------
-const panelTitle = document.querySelector('#panel h1');
-panelTitle.addEventListener('click', () => document.body.classList.toggle('panelled'));
+grab.addEventListener('click', () => document.body.classList.toggle('panelled'));
 
 addEventListener('pointerup', event => {
   const press = pressedOnCube;
@@ -664,8 +680,12 @@ function dolly(factor) {
 function fit() {
   const centre = centreOf();
   const size = new THREE.Vector3(...DATA.bbox.max).sub(new THREE.Vector3(...DATA.bbox.min));
+  // fov is the vertical angle. A portrait window is narrower across than it is
+  // tall, so the part has to be further off to fit the width -- without this a
+  // phone held upright cropped it off both edges.
   const reach = Math.max(size.x, size.y, size.z) /
-                (2 * Math.tan((camera.fov * Math.PI) / 360));
+                (2 * Math.tan((camera.fov * Math.PI) / 360)) /
+                Math.min(1, camera.aspect);
   const direction = camera.position.clone().sub(controls.target).normalize();
   camera.position.copy(centre).addScaledVector(direction, reach * 1.9);
   controls.target.copy(centre);
@@ -683,10 +703,15 @@ $('zoomFit').onclick = fit;
 // width, so the labels, which project through the same matrix, still line up.
 const PANEL_PX = 236;
 
+// Except on a narrow screen, where it slides off the model rather than sitting
+// beside it: it covers nothing when closed, so shifting the part away from it
+// only pushed the part off the left edge.
+const panelRoom = () => (innerWidth <= 640 ? 0 : Math.min(PANEL_PX, innerWidth * 0.35));
+
 function resize() {
   const w = innerWidth, h = innerHeight;
   camera.aspect = w / h;
-  camera.setViewOffset(w, h, Math.min(PANEL_PX, w * 0.35) / 2, 0, w, h);
+  camera.setViewOffset(w, h, panelRoom() / 2, 0, w, h);
   camera.updateProjectionMatrix();
   renderer.setSize(w, h); overlay.setSize(w, h);
   for (const m of leaderMaterials) m.resolution.set(w, h);
