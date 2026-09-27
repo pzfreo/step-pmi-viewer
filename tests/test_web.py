@@ -103,7 +103,18 @@ def test_the_recogniser_wheel_matches_what_ci_builds(page):
     wheel = re.search(r'const RECOGNISER = "(.*?)"', page).group(1)
     workflow = (PAGE.parents[1] / ".github" / "workflows" / "pages.yml").read_text()
     assert "uv build --wheel .quid2pmi --out-dir web" in workflow
+    assert "python scripts/sync_recogniser_wheel.py" in workflow
     assert wheel.startswith("./quid2pmi-") and wheel.endswith("-py3-none-any.whl")
+
+
+def test_deployment_uses_the_built_recogniser_wheel(tmp_path):
+    from scripts.sync_recogniser_wheel import sync
+
+    page = tmp_path / "index.html"
+    page.write_text('const RECOGNISER = "./quid2pmi-0.1.0-py3-none-any.whl";')
+    (tmp_path / "quid2pmi-0.2.0-py3-none-any.whl").touch()
+    sync(page, tmp_path)
+    assert 'const RECOGNISER = "./quid2pmi-0.2.0-py3-none-any.whl";' in page.read_text()
 
 
 def test_the_unbuildable_packages_are_stood_in_for(page):
@@ -113,7 +124,8 @@ def test_the_unbuildable_packages_are_stood_in_for(page):
     for name in ("cadquery-ocp-novtk", "lib3mf", "psutil"):
         assert f'add_mock_package("{name}"' in standins
     # build123d 0.12 wants an OCP 8 that OCP.wasm does not build.
-    assert 'micropip.install("build123d<0.12")' in page
+    assert 'micropip.install("build123d>=0.9,<0.12")' in page
+    assert 'micropip.install("quiddity>=0.3.6")' in page
 
 
 def test_the_standins_survive_importing_build123d(page):

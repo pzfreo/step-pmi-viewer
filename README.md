@@ -36,10 +36,11 @@ declutter against each other in screen space as you move.
 ## Install
 
 ```bash
-uv tool install step-pmi-viewer
+uv tool install 'step-pmi-viewer[recognise] @ git+https://github.com/pzfreo/step-pmi-viewer.git'
 ```
 
-`build123d` supplies the OCCT kernel through OCP; nothing else is needed.
+`build123d` supplies the OCCT kernel through OCP. The `recognise` extra installs
+`quid2pmi` from GitHub so files with no authored PMI can show recognised features.
 
 ## In the browser
 

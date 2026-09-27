@@ -17,7 +17,7 @@ keywords = ["cad", "step", "ap242", "pmi", "gd&t", "viewer", "three.js"]
 [project.optional-dependencies]
 # Feature recognition for files with no PMI. quid2pmi depends on this package,
 # so the import is deferred to the moment it is used; see recognise.py.
-recognise = ["quid2pmi>=0.1"]
+recognise = ["quid2pmi @ git+https://github.com/pzfreo/quid2pmi.git@main"]
 
 [project.urls]
 Repository = "https://github.com/pzfreo/step-pmi-viewer"
@@ -27,6 +27,9 @@ step-pmi-viewer = "step_pmi_viewer.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.15,<2"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/step_pmi_viewer"]

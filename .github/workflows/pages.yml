@@ -40,6 +40,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv build --wheel --out-dir web
       - run: uv build --wheel .quid2pmi --out-dir web
+      - run: python scripts/sync_recogniser_wheel.py
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

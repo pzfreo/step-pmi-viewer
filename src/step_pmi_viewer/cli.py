@@ -78,8 +78,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.recognise:
                 raise recognise.Unavailable(
-                    "recognising features needs quid2pmi: "
-                    "pip install 'step-pmi-viewer[recognise]'"
+                    f"recognising features needs quid2pmi: {recognise.INSTALL_RECOGNISE}"
                 )
         write(scene, output, args.title)
     except NoGeometry as exc:

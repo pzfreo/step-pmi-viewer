@@ -16,6 +16,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+INSTALL_RECOGNISE = (
+    "pip install 'step-pmi-viewer[recognise] @ "
+    "git+https://github.com/pzfreo/step-pmi-viewer.git'"
+)
+
 
 class Unavailable(RuntimeError):
     """quid2pmi is not installed, so features cannot be recognised."""
@@ -38,13 +43,13 @@ def write_recognised(source: Path | str, destination: Path | str) -> dict[str, i
     way is a by-product here and goes to a temporary directory.
     """
     try:
-        from quid2pmi import convert  # type: ignore[import-not-found]
+        from quid2pmi import convert  # type: ignore
     except ImportError as exc:  # pragma: no cover - depends on the environment
         # Name what is actually missing: quid2pmi itself may be present while one
         # of its dependencies is not, and "install quid2pmi" then reads as a lie.
         raise Unavailable(
             f"recognising features needs quid2pmi and its dependencies ({exc}): "
-            "pip install 'step-pmi-viewer[recognise]'"
+            f"{INSTALL_RECOGNISE}"
         ) from exc
 
     source, destination = Path(source), Path(destination)
