@@ -1,5 +1,11 @@
 # step-pmi-viewer
 
+> **This project is retired.** STEP PMI is now shown in
+> [Draftwright Specify](https://editor.draftwright.io/specify): open a STEP file to see its
+> semantic and graphical PMI in 3D, in the browser, with nothing uploaded. Specify
+> ([pzfreo/specify-core](https://github.com/pzfreo/specify-core)) also adds PMI a part is missing.
+> The page at pzfreo.github.io/step-pmi-viewer now redirects there.
+
 Read the PMI in a STEP file and write a self-contained web page showing it.
 
 ```bash

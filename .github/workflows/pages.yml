@@ -1,19 +1,11 @@
 name: Pages
 
-# Publish web/index.html, with the wheels it installs built beside it, so the
-# browser viewer can be opened without building anything. quid2pmi's wheel goes
-# too: the page offers to recognise features in a file that carries no PMI, and
-# fetches it only if someone asks.
+# The viewer has moved to Draftwright Specify (editor.draftwright.io/specify); this
+# publishes web/index.html, a page that sends visitors there.
 
 on:
   push:
     branches: [main]
-  # quid2pmi's wheel is built from its own repository at deploy time, so a change
-  # there does not reach the page until this runs again. Nothing in this repo
-  # notices that -- the live wheel was four commits behind before anyone looked.
-  # A daily rebuild picks it up; run this workflow by hand to get it sooner.
-  schedule:
-    - cron: "17 5 * * *"
   workflow_dispatch:
 
 permissions:
@@ -33,15 +25,6 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
-        with:
-          repository: pzfreo/quid2pmi
-          path: .quid2pmi
-      - uses: astral-sh/setup-uv@v10.2.0
-      - run: uv build --wheel --out-dir web
-      - run: uv build --wheel .quid2pmi --out-dir web
-      - run: python scripts/sync_recogniser_wheel.py
-      - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
           path: web
